@@ -11,7 +11,7 @@ def write_abi_to_env(contract_name):
     try:
         with open(file_path, 'r') as file:
             contract_data = json.load(file)
-            abi = contract_data['abi']
+            abi = contract_data
     except FileNotFoundError:
         print(f"File {file_path} not found.")
         return
