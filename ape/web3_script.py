@@ -8,84 +8,333 @@ w3 = Web3(Web3.HTTPProvider('http://127.0.0.1:8545'))
 
 assert w3.is_connected(), 'Failed to connect to the Ethereum client.'
 
-contract_address = '0xf5059a5D33d5853360D16C683c16e67980206f36'
+contract_address = '0x23d351BA89eaAc4E328133Cb48e050064C219A1E'
 abi = [
     {
-        "inputs": [
-            {
-                "name": "_user",
-                "type": "string"
-            }
-        ],
-        "name": "adduser",
-        "outputs": [],
         "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
+        "type": "function",
+        "name": "add_product",
         "inputs": [
             {
-                "name": "_user",
+                "name": "name",
+                "type": "string"
+            },
+            {
+                "name": "git_ref",
                 "type": "string"
             }
         ],
-        "name": "getuser",
         "outputs": [
             {
                 "name": "",
                 "type": "uint256"
             }
-        ],
-        "stateMutability": "view",
-        "type": "function"
+        ]
     },
     {
+        "stateMutability": "nonpayable",
+        "type": "function",
+        "name": "add_product_build",
         "inputs": [
             {
-                "name": "_user",
+                "name": "git_ref",
                 "type": "string"
             },
             {
-                "name": "_amount",
+                "name": "kind",
+                "type": "int128"
+            },
+            {
+                "name": "verification",
+                "type": "string"
+            }
+        ],
+        "outputs": []
+    },
+    {
+        "stateMutability": "nonpayable",
+        "type": "function",
+        "name": "get_product",
+        "inputs": [
+            {
+                "name": "product_id",
                 "type": "uint256"
             }
         ],
-        "name": "set_balance",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
+        "outputs": [
+            {
+                "name": "",
+                "type": "tuple",
+                "components": [
+                    {
+                        "name": "name",
+                        "type": "string"
+                    },
+                    {
+                        "name": "git_ref",
+                        "type": "string"
+                    },
+                    {
+                        "name": "known_critical_issues",
+                        "type": "bool"
+                    }
+                ]
+            }
+        ]
     },
     {
+        "stateMutability": "nonpayable",
+        "type": "function",
+        "name": "get_product_build",
+        "inputs": [
+            {
+                "name": "verification",
+                "type": "string"
+            }
+        ],
+        "outputs": [
+            {
+                "name": "",
+                "type": "tuple",
+                "components": [
+                    {
+                        "name": "product_id",
+                        "type": "uint256"
+                    },
+                    {
+                        "name": "kind",
+                        "type": "int128"
+                    },
+                    {
+                        "name": "verified",
+                        "type": "bool"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "stateMutability": "nonpayable",
+        "type": "function",
+        "name": "get_product_counter",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "uint256"
+            }
+        ]
+    },
+    {
+        "stateMutability": "nonpayable",
+        "type": "function",
+        "name": "set_critical",
+        "inputs": [
+            {
+                "name": "product_id",
+                "type": "uint256"
+            },
+            {
+                "name": "critical",
+                "type": "bool"
+            }
+        ],
+        "outputs": []
+    },
+    {
+        "stateMutability": "nonpayable",
+        "type": "function",
+        "name": "add_attestation",
+        "inputs": [
+            {
+                "name": "verification",
+                "type": "string"
+            }
+        ],
+        "outputs": []
+    },
+    {
+        "stateMutability": "view",
+        "type": "function",
+        "name": "foundation_owner",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "address"
+            }
+        ]
+    },
+    {
+        "stateMutability": "view",
+        "type": "function",
+        "name": "product_creator",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "address"
+            }
+        ]
+    },
+    {
+        "stateMutability": "view",
+        "type": "function",
+        "name": "official_validator",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "address"
+            }
+        ]
+    },
+    {
+        "stateMutability": "view",
+        "type": "function",
+        "name": "security_team",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "address"
+            }
+        ]
+    },
+    {
+        "stateMutability": "view",
+        "type": "function",
+        "name": "next_product",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "uint256"
+            }
+        ]
+    },
+    {
+        "stateMutability": "view",
+        "type": "function",
+        "name": "products",
+        "inputs": [
+            {
+                "name": "arg0",
+                "type": "uint256"
+            }
+        ],
+        "outputs": [
+            {
+                "name": "",
+                "type": "tuple",
+                "components": [
+                    {
+                        "name": "name",
+                        "type": "string"
+                    },
+                    {
+                        "name": "git_ref",
+                        "type": "string"
+                    },
+                    {
+                        "name": "known_critical_issues",
+                        "type": "bool"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "stateMutability": "view",
+        "type": "function",
+        "name": "product_builds",
         "inputs": [
             {
                 "name": "arg0",
                 "type": "string"
             }
         ],
-        "name": "balances",
         "outputs": [
             {
                 "name": "",
+                "type": "tuple",
+                "components": [
+                    {
+                        "name": "product_id",
+                        "type": "uint256"
+                    },
+                    {
+                        "name": "kind",
+                        "type": "int128"
+                    },
+                    {
+                        "name": "verified",
+                        "type": "bool"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "stateMutability": "view",
+        "type": "function",
+        "name": "attestations",
+        "inputs": [
+            {
+                "name": "arg0",
                 "type": "uint256"
             }
         ],
-        "stateMutability": "view",
-        "type": "function"
+        "outputs": [
+            {
+                "name": "",
+                "type": "tuple",
+                "components": [
+                    {
+                        "name": "product_build_id",
+                        "type": "uint256"
+                    },
+                    {
+                        "name": "verificator",
+                        "type": "address"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "stateMutability": "nonpayable",
+        "type": "constructor",
+        "inputs": [
+            {
+                "name": "_product_creator",
+                "type": "address"
+            },
+            {
+                "name": "_official_validator",
+                "type": "address"
+            },
+            {
+                "name": "_security_team",
+                "type": "address"
+            }
+        ],
+        "outputs": []
     }
 ]
 
 contract = w3.eth.contract(address=contract_address, abi=abi)
 
-account_address = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
+account_address = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
 private_key = os.getenv('PRIVATE_KEY')
 assert private_key, 'Private key not found in .env file'
 
-def adduser(_user):
+def add_product(name, git_ref):
     # Update nonce before building transaction
     updated_nonce = w3.eth.get_transaction_count(account_address)
 
     # Build transaction with updated nonce
-    txn = contract.functions.adduser(_user).build_transaction({
+    txn = contract.functions.add_product(name, git_ref).build_transaction({
         'chainId': 31337,
         'gas': 2000000,
         'nonce': updated_nonce,
@@ -99,15 +348,12 @@ def adduser(_user):
     tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
     return tx_receipt
 
-def getuser(_user):
-    return contract.functions.getuser(_user).call()
-
-def set_balance(_user, _amount):
+def add_product_build(git_ref, kind, verification):
     # Update nonce before building transaction
     updated_nonce = w3.eth.get_transaction_count(account_address)
 
     # Build transaction with updated nonce
-    txn = contract.functions.set_balance(_user, _amount).build_transaction({
+    txn = contract.functions.add_product_build(git_ref, kind, verification).build_transaction({
         'chainId': 31337,
         'gas': 2000000,
         'nonce': updated_nonce,
@@ -121,6 +367,122 @@ def set_balance(_user, _amount):
     tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
     return tx_receipt
 
-def balances(arg0):
-    return contract.functions.balances(arg0).call()
+def get_product(product_id):
+    # Update nonce before building transaction
+    updated_nonce = w3.eth.get_transaction_count(account_address)
+
+    # Build transaction with updated nonce
+    txn = contract.functions.get_product(product_id).build_transaction({
+        'chainId': 31337,
+        'gas': 2000000,
+        'nonce': updated_nonce,
+    })
+
+    # Sign transaction
+    signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
+    # Send transaction
+    tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+    # Wait for transaction to be mined
+    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    return tx_receipt
+
+def get_product_build(verification):
+    # Update nonce before building transaction
+    updated_nonce = w3.eth.get_transaction_count(account_address)
+
+    # Build transaction with updated nonce
+    txn = contract.functions.get_product_build(verification).build_transaction({
+        'chainId': 31337,
+        'gas': 2000000,
+        'nonce': updated_nonce,
+    })
+
+    # Sign transaction
+    signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
+    # Send transaction
+    tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+    # Wait for transaction to be mined
+    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    return tx_receipt
+
+def get_product_counter():
+    # Update nonce before building transaction
+    updated_nonce = w3.eth.get_transaction_count(account_address)
+
+    # Build transaction with updated nonce
+    txn = contract.functions.get_product_counter().build_transaction({
+        'chainId': 31337,
+        'gas': 2000000,
+        'nonce': updated_nonce,
+    })
+
+    # Sign transaction
+    signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
+    # Send transaction
+    tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+    # Wait for transaction to be mined
+    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    return tx_receipt
+
+def set_critical(product_id, critical):
+    # Update nonce before building transaction
+    updated_nonce = w3.eth.get_transaction_count(account_address)
+
+    # Build transaction with updated nonce
+    txn = contract.functions.set_critical(product_id, critical).build_transaction({
+        'chainId': 31337,
+        'gas': 2000000,
+        'nonce': updated_nonce,
+    })
+
+    # Sign transaction
+    signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
+    # Send transaction
+    tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+    # Wait for transaction to be mined
+    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    return tx_receipt
+
+def add_attestation(verification):
+    # Update nonce before building transaction
+    updated_nonce = w3.eth.get_transaction_count(account_address)
+
+    # Build transaction with updated nonce
+    txn = contract.functions.add_attestation(verification).build_transaction({
+        'chainId': 31337,
+        'gas': 2000000,
+        'nonce': updated_nonce,
+    })
+
+    # Sign transaction
+    signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
+    # Send transaction
+    tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+    # Wait for transaction to be mined
+    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    return tx_receipt
+
+def foundation_owner():
+    return contract.functions.foundation_owner().call()
+
+def product_creator():
+    return contract.functions.product_creator().call()
+
+def official_validator():
+    return contract.functions.official_validator().call()
+
+def security_team():
+    return contract.functions.security_team().call()
+
+def next_product():
+    return contract.functions.next_product().call()
+
+def products(arg0):
+    return contract.functions.products(arg0).call()
+
+def product_builds(arg0):
+    return contract.functions.product_builds(arg0).call()
+
+def attestations(arg0):
+    return contract.functions.attestations(arg0).call()
 
