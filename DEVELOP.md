@@ -12,18 +12,28 @@ Install requirements:
 pip install -r requirements.txt
 ```
 Make sure to have foundry installed.  
-You need anvil running in a seperate terminal for this.  
-Run in a seperate terminal:
+To work on these tooling you need to run an own local chain on
+your workstation. For that run
 ```bash
 anvil
 ```
+And keep it running. It also creates multiple accounts with 
+keypairs you need to use below.
 
-Inside the `ape` folder there is a sample ape project.  
-Go to the folder and run `ape compile` to compile the contract and then run the deploy script.  
-You can also run the deploy script directly and ape will compile your project, if you haven't done so.
+First we need to create for each role an own account. So you need
+to pick a matching public and private key pair from the output
+of the anvil tool. And use it to create multiple accounts in the
+anvil chain. 
 
-Make sure to check the deploy script and replace the account with your account name.  
-When running the command you need to enter the name of the contract. Make sure it's the same as the name you've given the `.vy` file name.  
 ```bash
-ape run scripts/deploy.py --network http://localhost:8545
+ape accounts import foundation
+ape accounts import product_creator
+ape accounts import attestator
+ape accounts import security_team
+```
+
+To finally deploy the contract use
+```bash
+cd ape
+ape run scripts/deploy_anvil.py --network http://localhost:8545
 ```
