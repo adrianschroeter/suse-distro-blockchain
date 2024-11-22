@@ -8,18 +8,18 @@ from typing import List
 config_file = "/etc/suse-distro-check.conf"
 
 cfg = INIConfig(open(config_file))
-network=''
+network='main' # not a network, but our starting point in config file. It defines the network to be used.
 provider_url=''
 provider=None
 chainid=0
 contract_address="0x0"
 for alias in cfg:
+    if network != alias:
+        continue
     for k in cfg[alias]:
         print(f"check {alias} {k}")
         if alias == 'main' and k == 'network':
             network = cfg[alias][k]
-        if network != alias:
-            continue
         print(f"{k}")
         if k == 'http_provider':
             provider_url = cfg[alias][k]
