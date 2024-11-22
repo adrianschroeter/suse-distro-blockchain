@@ -17,10 +17,8 @@ for alias in cfg:
     if network != alias:
         continue
     for k in cfg[alias]:
-        print(f"check {alias} {k}")
         if alias == 'main' and k == 'network':
             network = cfg[alias][k]
-        print(f"{k}")
         if k == 'http_provider':
             provider_url = cfg[alias][k]
         if k == 'chainid':
@@ -64,6 +62,19 @@ def main(argv: List[str] = None) -> None:
     import glob
     import re
     import os
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Validate you repository via the blockchain.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "aliases",
+        metavar="zyppc alias",
+        nargs="+",
+        help="The alias of a repository defined in zypp repo file",
+    )
+    args = parser.parse_args(argv)
 
     repos = []
     reposdirs = [ "/etc/zypp/repos.d" ]
@@ -72,7 +83,11 @@ def main(argv: List[str] = None) -> None:
         continue
       for reponame in sorted(glob.glob('%s/*.repo' % reposdir)):
         repocfg = INIConfig(open(reponame))
+
         for alias in repocfg:
+            if len(args.aliases) > 0 and not alias in args.aliases[0]:
+                continue
+
             repoattr = {'enabled': 0, 'priority': 99, 'autorefresh': 1, 'type': 'rpm-md', 'metadata_expire': 900}
             for k in repocfg[alias]:
                 repoattr[k] = repocfg[alias][k]
@@ -104,7 +119,7 @@ def main(argv: List[str] = None) -> None:
                    try:
                        build = contract.functions.get_product_build(verification).call()
                    except:
-                       print(f"Warning: repo not registered in the block chain")
+                       print(f"Warning: repo not registered in the block chain with verification id {verification}")
                        continue
                    # we get always an empty product atm when it is not matching
                    if build[0] == 0:
