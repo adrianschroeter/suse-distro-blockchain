@@ -73,21 +73,3 @@ if st.button('Execute next_product', key='next_product_button'):
     result = next_product()
     st.write(f'Result: {result}')
 
-st.header('Function: products')
-arg0 = st.number_input('Enter arg0', step=1, key='products_arg0')
-if st.button('Execute products', key='products_button'):
-    result = products(arg0)
-    st.write(f'Result: {result}')
-
-st.header('Function: product_builds')
-arg0 = st.text_input('Enter arg0', key='product_builds_arg0')
-if st.button('Execute product_builds', key='product_builds_button'):
-    result = product_builds(arg0)
-    st.write(f'Result: {result}')
-
-st.header('Function: attestations')
-arg0 = st.number_input('Enter arg0', step=1, key='attestations_arg0')
-if st.button('Execute attestations', key='attestations_button'):
-    result = attestations(arg0)
-    st.write(f'Result: {result}')
-

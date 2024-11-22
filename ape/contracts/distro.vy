@@ -1,5 +1,10 @@
 # @version ^0.4.0
 
+# SHA-512 ready string for build verification
+#type BuildVerificationType = Bytes[128]
+# SHA-256 string for git refs
+#type GitVerificationType = String[64]
+
 # The board of openSUSE community. Or the leadership team of SUSE.com.
 foundation_owner: public(address)
 
@@ -27,28 +32,24 @@ struct my_product :
     known_critical_issues: bool
     # reached_end_of_life: bool
 
-products: public(HashMap[uint256, my_product])
+products: HashMap[uint256, my_product]
 
 # A product may be build in different forms. For example
 # an rpm-md tree, an install iso, kvm image or container.
 # Each of them need to become validated independend
+flag BuildKinds:
+    rpmmd
+    product
+
 struct my_product_build :
     # as given on product create
     product_id: uint256
-    # 0=rpm-md | 1=install.iso | ....
-    kind: int128
-#    verification: String[64]
+    kind: uint8
     verified: bool
 
-product_builds: public(HashMap[String[64], my_product_build])
+product_builds: HashMap[bytes32, my_product_build]
 
-# Attestation for a product can be done by anyone
-struct my_product_build_attestation :
-    # as given on product create
-    product_build_id: uint256
-    verificator: address
-
-attestations: public(HashMap[uint256, my_product_build_attestation])
+current_verification: HashMap[String[19], String[128]]
 
 @deploy
 def __init__(_product_creator: address, _official_validator: address, _security_team: address):
@@ -56,15 +57,15 @@ def __init__(_product_creator: address, _official_validator: address, _security_
     self.product_creator    = _product_creator
     self.official_validator = _official_validator
     self.security_team      = _security_team
-    self.next_product       = 0
-
+    # zero product is currently used for not existing product
+    self.next_product       = 1
 
 @external
 def add_product(name: String[16], git_ref: String[64]) -> uint256:
     # Only product creator is allowed to add a new product
-    assert msg.sender == self.product_creator
+    assert msg.sender == self.product_creator or msg.sender == self.foundation_owner
     # we have not reached our limit yet
-#    assert uint256(self.product_count + 1)
+    assert self.next_product < max_value(uint256)
     # add the product
     current_product: uint256 = self.next_product
     self.products[current_product].name = name
@@ -74,32 +75,54 @@ def add_product(name: String[16], git_ref: String[64]) -> uint256:
     return current_product
 
 @external
-def add_product_build(git_ref: String[64], kind: int128, verification: String[64]):
+def add_product_build(git_ref: String[64], kind: uint8, verification: String[128]):
     # Only product creator is allowed to add a new product
-    assert msg.sender == self.product_creator
-    # we have not reached our limit yet
-#    assert uint256(self.product_count_build + 1)
+    assert msg.sender == self.product_creator or msg.sender == self.foundation_owner
+
+    hash: bytes32 = keccak256(verification)
+
+    # build is not yet registered
+    assert self.product_builds[hash].product_id == 0
 
     # find the product
-    for id: uint256 in range(0, 9999):
-       if self.products[id].git_ref == git_ref:
-          self.product_builds[verification].product_id = id
-          
-    self.product_builds[verification].kind = kind
-#    self.product_builds[verification].verification = verification
-    self.product_builds[verification].verified = False
+    for product_id: uint256 in range(max_value(uint256)):
+       assert product_id < self.next_product
 
+       if self.products[product_id].git_ref == git_ref:
+          self.product_builds[hash].product_id = product_id
+          cur_hash: String[19] = concat(self.products[product_id].name, uint2str(kind))
+          # set current verification
+          self.current_verification[cur_hash] = verification
+          break
+
+    # we found a product now          
+    assert self.product_builds[hash].product_id != 0
+
+    self.product_builds[hash].kind = kind
+    self.product_builds[hash].verified = False
+
+
+@view
 @external
 def get_product(product_id: uint256) -> my_product:
     return self.products[product_id]
 
+@view
 @external
-def get_product_build(verification: String[64]) -> my_product_build:
-    return self.product_builds[verification]
+def get_product_build(verification: String[128]) -> my_product_build:
+    hash: bytes32 = keccak256(verification)
+    return self.product_builds[hash]
 
+@view
+@external
+def current_product_build(name: String[16], kind: uint8) -> String[128]:
+    hash: String[19] = concat(name, uint2str(kind))
+    return self.current_verification[hash]
+
+@view
 @external
 def get_product_counter() -> uint256:
-    return self.next_product
+    return self.next_product - 1
 
 @external
 def set_critical(product_id: uint256, critical: bool):
@@ -108,9 +131,10 @@ def set_critical(product_id: uint256, critical: bool):
 
 
 @external
-def add_attestation(verification: String[64]):
+def add_attestation(verification: String[128]):
     # We have currently just a single official validator
     assert msg.sender == self.official_validator
-    self.product_builds[verification].verified = True
+    hash: bytes32 = keccak256(verification)
+    self.product_builds[hash].verified = True
 
 

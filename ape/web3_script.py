@@ -8,7 +8,7 @@ w3 = Web3(Web3.HTTPProvider('http://127.0.0.1:8545'))
 
 assert w3.is_connected(), 'Failed to connect to the Ethereum client.'
 
-contract_address = '0x23d351BA89eaAc4E328133Cb48e050064C219A1E'
+contract_address = '0x6ad448bF2AdbF3A7Aa9BfE411eD908315566aE24'
 abi = [
     {
         "stateMutability": "nonpayable",
@@ -42,7 +42,7 @@ abi = [
             },
             {
                 "name": "kind",
-                "type": "int128"
+                "type": "uint256"
             },
             {
                 "name": "verification",
@@ -52,7 +52,7 @@ abi = [
         "outputs": []
     },
     {
-        "stateMutability": "nonpayable",
+        "stateMutability": "view",
         "type": "function",
         "name": "get_product",
         "inputs": [
@@ -83,7 +83,7 @@ abi = [
         ]
     },
     {
-        "stateMutability": "nonpayable",
+        "stateMutability": "view",
         "type": "function",
         "name": "get_product_build",
         "inputs": [
@@ -103,7 +103,7 @@ abi = [
                     },
                     {
                         "name": "kind",
-                        "type": "int128"
+                        "type": "uint256"
                     },
                     {
                         "name": "verified",
@@ -114,7 +114,7 @@ abi = [
         ]
     },
     {
-        "stateMutability": "nonpayable",
+        "stateMutability": "view",
         "type": "function",
         "name": "get_product_counter",
         "inputs": [],
@@ -214,95 +214,6 @@ abi = [
         ]
     },
     {
-        "stateMutability": "view",
-        "type": "function",
-        "name": "products",
-        "inputs": [
-            {
-                "name": "arg0",
-                "type": "uint256"
-            }
-        ],
-        "outputs": [
-            {
-                "name": "",
-                "type": "tuple",
-                "components": [
-                    {
-                        "name": "name",
-                        "type": "string"
-                    },
-                    {
-                        "name": "git_ref",
-                        "type": "string"
-                    },
-                    {
-                        "name": "known_critical_issues",
-                        "type": "bool"
-                    }
-                ]
-            }
-        ]
-    },
-    {
-        "stateMutability": "view",
-        "type": "function",
-        "name": "product_builds",
-        "inputs": [
-            {
-                "name": "arg0",
-                "type": "string"
-            }
-        ],
-        "outputs": [
-            {
-                "name": "",
-                "type": "tuple",
-                "components": [
-                    {
-                        "name": "product_id",
-                        "type": "uint256"
-                    },
-                    {
-                        "name": "kind",
-                        "type": "int128"
-                    },
-                    {
-                        "name": "verified",
-                        "type": "bool"
-                    }
-                ]
-            }
-        ]
-    },
-    {
-        "stateMutability": "view",
-        "type": "function",
-        "name": "attestations",
-        "inputs": [
-            {
-                "name": "arg0",
-                "type": "uint256"
-            }
-        ],
-        "outputs": [
-            {
-                "name": "",
-                "type": "tuple",
-                "components": [
-                    {
-                        "name": "product_build_id",
-                        "type": "uint256"
-                    },
-                    {
-                        "name": "verificator",
-                        "type": "address"
-                    }
-                ]
-            }
-        ]
-    },
-    {
         "stateMutability": "nonpayable",
         "type": "constructor",
         "inputs": [
@@ -368,61 +279,13 @@ def add_product_build(git_ref, kind, verification):
     return tx_receipt
 
 def get_product(product_id):
-    # Update nonce before building transaction
-    updated_nonce = w3.eth.get_transaction_count(account_address)
-
-    # Build transaction with updated nonce
-    txn = contract.functions.get_product(product_id).build_transaction({
-        'chainId': 31337,
-        'gas': 2000000,
-        'nonce': updated_nonce,
-    })
-
-    # Sign transaction
-    signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
-    # Send transaction
-    tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
-    # Wait for transaction to be mined
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    return tx_receipt
+    return contract.functions.get_product(product_id).call()
 
 def get_product_build(verification):
-    # Update nonce before building transaction
-    updated_nonce = w3.eth.get_transaction_count(account_address)
-
-    # Build transaction with updated nonce
-    txn = contract.functions.get_product_build(verification).build_transaction({
-        'chainId': 31337,
-        'gas': 2000000,
-        'nonce': updated_nonce,
-    })
-
-    # Sign transaction
-    signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
-    # Send transaction
-    tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
-    # Wait for transaction to be mined
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    return tx_receipt
+    return contract.functions.get_product_build(verification).call()
 
 def get_product_counter():
-    # Update nonce before building transaction
-    updated_nonce = w3.eth.get_transaction_count(account_address)
-
-    # Build transaction with updated nonce
-    txn = contract.functions.get_product_counter().build_transaction({
-        'chainId': 31337,
-        'gas': 2000000,
-        'nonce': updated_nonce,
-    })
-
-    # Sign transaction
-    signed_txn = w3.eth.account.sign_transaction(txn, private_key=private_key)
-    # Send transaction
-    tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
-    # Wait for transaction to be mined
-    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-    return tx_receipt
+    return contract.functions.get_product_counter().call()
 
 def set_critical(product_id, critical):
     # Update nonce before building transaction
@@ -476,13 +339,4 @@ def security_team():
 
 def next_product():
     return contract.functions.next_product().call()
-
-def products(arg0):
-    return contract.functions.products(arg0).call()
-
-def product_builds(arg0):
-    return contract.functions.product_builds(arg0).call()
-
-def attestations(arg0):
-    return contract.functions.attestations(arg0).call()
 
