@@ -106,7 +106,7 @@ Roles in this example setup
 
    He has the duty to register new product builds in the chain.
 
-3) The attestater
+3) The attestator
 
    She would rebuild the source and verifies that the same binary get created.
 

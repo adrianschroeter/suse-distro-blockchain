@@ -8,7 +8,7 @@ w3 = Web3(Web3.HTTPProvider('http://127.0.0.1:8545'))
 
 assert w3.is_connected(), 'Failed to connect to the Ethereum client.'
 
-contract_address = '0x6ad448bF2AdbF3A7Aa9BfE411eD908315566aE24'
+contract_address = '0x12aEdb6639C160B051be89B77717F46eafac282b'
 abi = [
     {
         "stateMutability": "nonpayable",

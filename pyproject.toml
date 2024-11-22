@@ -1,0 +1,49 @@
+[tool.poetry]
+name = "repository-check"
+version = "0.0.1"
+description = "A tool to verify the state of current used repositories"
+authors = ["Adrian Schroeter <adrian@suse.de>"]
+license = "GPLv3"
+readme = "README.md"
+exclude = ["pyremix", "ape"]
+packages = [
+    { include = "suse-distro-blockchain", from = "src" },
+]
+#documentation = "http://.readthedocs.io"
+repository = "https://github.com/adrianschroeter/suse-distro-blockchain"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: System :: Networking"
+]
+
+[tool.poetry.scripts]
+distro-repository-check = "suse-distro-check:main"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+web3 = "^7.5.0"
+
+[tool.poetry.dev-dependencies]
+black = "^19.10b0"
+flake8 = "^3.9.0"
+flake8-docstrings = "^1.6.0"
+flake8-import-order = "^0.18.1"
+pytest = "^6.2.3"
+pytest-cov = "^2.11.1"
+sphinx = "^3.5.3"
+sphinx-rtd-theme = "^0.5.1"
+mypy = "^0.812"
+
+[tool.coverage.run]
+branch = true
+source = ["suse-distro-check"]
+
+[tool.coverage.report]
+show_missing = true
+
+[build-system]
+requires = ["poetry-core"]
+#build-backend = "poetry.core.masonry.api"
+

@@ -2,6 +2,12 @@
 
 Create a virtual environment
 I'm naming my virtual environment here `myv`.
+
+PLEASE NOTE THAT THIS IS NOT PROTECTING YOUR SYSTEM.
+DO THIS IN A RESERVED VM!
+
+(todo: package the development env)
+
 ```bash
 python3 -m venv ./myv
 ```
@@ -9,7 +15,7 @@ Make sure that if you name your virtual environment something else, you include 
 
 Install requirements:
 ```bash
-pip install -r requirements.txt
+pipx-3.12 install vyper eth-ape ape-vyper web3 streamlit python-dotenv
 ```
 Make sure to have foundry installed.  
 To work on these tooling you need to run an own local chain on
