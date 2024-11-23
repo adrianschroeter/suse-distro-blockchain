@@ -30,6 +30,13 @@ if st.button('Execute get_product_build', key='get_product_build_button'):
     result = get_product_build(verification)
     st.write(f'Result: {result}')
 
+st.header('Function: current_product_build')
+name = st.text_input('Enter name', key='current_product_build_name')
+kind = st.number_input('Enter kind', step=1, key='current_product_build_kind')
+if st.button('Execute current_product_build', key='current_product_build_button'):
+    result = current_product_build(name, kind)
+    st.write(f'Result: {result}')
+
 st.header('Function: get_product_counter')
 if st.button('Execute get_product_counter', key='get_product_counter_button'):
     result = get_product_counter()

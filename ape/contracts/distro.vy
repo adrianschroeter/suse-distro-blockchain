@@ -47,7 +47,7 @@ struct my_product_build :
     kind: uint8
     verified: bool
 
-product_builds: HashMap[bytes32, my_product_build]
+product_builds: HashMap[String[128], my_product_build]
 
 current_verification: HashMap[String[19], String[128]]
 
@@ -63,7 +63,7 @@ def __init__(_product_creator: address, _official_validator: address, _security_
 @external
 def add_product(name: String[16], git_ref: String[64]) -> uint256:
     # Only product creator is allowed to add a new product
-    assert msg.sender == self.product_creator or msg.sender == self.foundation_owner
+    assert msg.sender == self.product_creator
     # we have not reached our limit yet
     assert self.next_product < max_value(uint256)
     # add the product
@@ -77,29 +77,27 @@ def add_product(name: String[16], git_ref: String[64]) -> uint256:
 @external
 def add_product_build(git_ref: String[64], kind: uint8, verification: String[128]):
     # Only product creator is allowed to add a new product
-    assert msg.sender == self.product_creator or msg.sender == self.foundation_owner
-
-    hash: bytes32 = keccak256(verification)
+    assert msg.sender == self.product_creator
 
     # build is not yet registered
-    assert self.product_builds[hash].product_id == 0
+    assert self.product_builds[verification].product_id == 0
 
     # find the product
     for product_id: uint256 in range(max_value(uint256)):
        assert product_id < self.next_product
 
        if self.products[product_id].git_ref == git_ref:
-          self.product_builds[hash].product_id = product_id
-          cur_hash: String[19] = concat(self.products[product_id].name, uint2str(kind))
+          self.product_builds[verification].product_id = product_id
+          current_key: String[19] = concat(self.products[product_id].name, uint2str(kind))
           # set current verification
-          self.current_verification[cur_hash] = verification
+          self.current_verification[current_key] = verification
           break
 
     # we found a product now          
-    assert self.product_builds[hash].product_id != 0
+    assert self.product_builds[verification].product_id != 0
 
-    self.product_builds[hash].kind = kind
-    self.product_builds[hash].verified = False
+    self.product_builds[verification].kind = kind
+    self.product_builds[verification].verified = False
 
 
 @view
@@ -110,8 +108,7 @@ def get_product(product_id: uint256) -> my_product:
 @view
 @external
 def get_product_build(verification: String[128]) -> my_product_build:
-    hash: bytes32 = keccak256(verification)
-    return self.product_builds[hash]
+    return self.product_builds[verification]
 
 @view
 @external
@@ -134,7 +131,6 @@ def set_critical(product_id: uint256, critical: bool):
 def add_attestation(verification: String[128]):
     # We have currently just a single official validator
     assert msg.sender == self.official_validator
-    hash: bytes32 = keccak256(verification)
-    self.product_builds[hash].verified = True
+    self.product_builds[verification].verified = True
 
 

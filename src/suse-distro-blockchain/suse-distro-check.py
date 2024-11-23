@@ -35,7 +35,7 @@ if not w3.is_connected():
     print("We have no contact to our local blockchain provider")
     exit(1)
 
-print(f"Used chain ID: {w3.eth.chain_id}, @block: {w3.eth.block_number}")
+print(f"Used chain ID: {w3.eth.chain_id}, @block: {w3.eth.block_number}, contract: {contract_address}")
 
 if w3.eth.chain_id != chainid:
     print(f"Wrong chain ID: {w3.eth.chain_id} and we expect {chainid}")

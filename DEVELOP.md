@@ -41,12 +41,12 @@ ape accounts import security_team
 To finally deploy the contract use
 ```bash
 cd ape
-# on abi changes:
 ape run scripts/deploy_anvil.py --network http://localhost:8545
 ```
 
 On modifications of the contract run:
 ```bash
+# on abi changes:
 vyper -f abi contracts/distro.vy  > .build/distro.json
 python3 test_distro_contract.py
 ```

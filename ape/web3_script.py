@@ -8,7 +8,7 @@ w3 = Web3(Web3.HTTPProvider('http://127.0.0.1:8545'))
 
 assert w3.is_connected(), 'Failed to connect to the Ethereum client.'
 
-contract_address = '0x12aEdb6639C160B051be89B77717F46eafac282b'
+contract_address = '0x0e075cB6f980203F8e930a0B527CDbE07F303eAD'
 abi = [
     {
         "stateMutability": "nonpayable",
@@ -42,7 +42,7 @@ abi = [
             },
             {
                 "name": "kind",
-                "type": "uint256"
+                "type": "uint8"
             },
             {
                 "name": "verification",
@@ -103,13 +103,34 @@ abi = [
                     },
                     {
                         "name": "kind",
-                        "type": "uint256"
+                        "type": "uint8"
                     },
                     {
                         "name": "verified",
                         "type": "bool"
                     }
                 ]
+            }
+        ]
+    },
+    {
+        "stateMutability": "view",
+        "type": "function",
+        "name": "current_product_build",
+        "inputs": [
+            {
+                "name": "name",
+                "type": "string"
+            },
+            {
+                "name": "kind",
+                "type": "uint8"
+            }
+        ],
+        "outputs": [
+            {
+                "name": "",
+                "type": "string"
             }
         ]
     },
@@ -283,6 +304,9 @@ def get_product(product_id):
 
 def get_product_build(verification):
     return contract.functions.get_product_build(verification).call()
+
+def current_product_build(name, kind):
+    return contract.functions.current_product_build(name, kind).call()
 
 def get_product_counter():
     return contract.functions.get_product_counter().call()
