@@ -29,7 +29,7 @@ for alias in cfg:
 
 provider = Web3.HTTPProvider(provider_url)
 
-print(f"Reaching our to {provider_url}")
+print(f"Reaching out to {provider_url}")
 w3 = Web3(provider)
 
 if not w3.is_connected():
