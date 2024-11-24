@@ -4,6 +4,7 @@ from web3 import Web3, EthereumTesterProvider
 from iniparse import INIConfig
 from optparse import OptionParser
 from typing import List
+from termcolor import colored
 
 config_file = "/etc/suse-distro-check.conf"
 
@@ -127,22 +128,32 @@ def main(argv: List[str] = None) -> None:
 
                    product = contract.functions.get_product(build[0]).call()
                    
+                   exit_code=0
                    print(f"Selected product:         {product[0]}")
                    print(f"Used source SHA-256:      {product[1]}")
                    if build[1] == 0:
                        print("Build Type:               rpm-md")
                    else:
                        print("Build Type:               UNKNOWN")
-                   print(f"Critical Security Issues: {product[2]}")
-                   print(f"Same Rebuild Attestated:  {build[2]}")
+                   if product[2]:
+                       print(colored(f"ERROR: Critical security issues reported", color="red"))
+                       exit_code=1
+                   else:
+                       print(colored(f"No critical security issues reported", color="green"))
+                   if build[2]:
+                       print(colored(f"Same rebuild from source attestated:  {build[2]}", color="green"))
+                   else:
+                       print(colored(f"Same rebuild not (yet) attestated", color="yellow"))
+                       #exit_code=1 # to be configured by user
 
                    print()
                    current_verification = contract.functions.current_product_build(product[0], build[1]).call()
                    if verification == current_verification:
-                       print("The contract proofed your repository cache as current state :)")
+                       print(colored("The contract proofed your repository cache as current state :)", color="green"))
                    else:
-                       print(f"ERROR: The contract has different current state registered: {current_verification}")
-                       exit(1)
+                       print(colored(f"ERROR: The contract has different current state registered: {current_verification}", color="red"))
+                       exit_code=1
+                   exit(exit_code)
 
 if __name__ == "__main__":  # pragma: nocover
     main()
