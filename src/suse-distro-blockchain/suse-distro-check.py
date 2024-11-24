@@ -70,9 +70,8 @@ def main(argv: List[str] = None) -> None:
     )
     parser.add_argument(
         "aliases",
-        metavar="zyppc alias",
         nargs="+",
-        help="The alias of a repository defined in zypp repo file",
+        help="The alias of a repository to be checked as defined in zypp repo file",
     )
     args = parser.parse_args(argv)
 
@@ -136,6 +135,14 @@ def main(argv: List[str] = None) -> None:
                        print("Build Type:               UNKNOWN")
                    print(f"Critical Security Issues: {product[2]}")
                    print(f"Same Rebuild Attestated:  {build[2]}")
+
+                   print()
+                   current_verification = contract.functions.current_product_build(product[0], build[1]).call()
+                   if verification == current_verification:
+                       print("The contract proofed your repository cache as current state :)")
+                   else:
+                       print(f"ERROR: The contract has different current state registered: {current_verification}")
+                       exit(1)
 
 if __name__ == "__main__":  # pragma: nocover
     main()
