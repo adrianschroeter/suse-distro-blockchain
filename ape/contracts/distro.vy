@@ -42,11 +42,16 @@ flag BuildKinds:
     product
     oci_container
 
+flag Attestation:
+    outstanding
+    approved
+    rejected
+
 struct my_product_build :
     # as given on product create
     product_id: uint256
     kind: uint8
-    verified: bool
+    attestation: Attestation
 
 product_builds: HashMap[String[128], my_product_build]
 
@@ -124,7 +129,7 @@ def add_product_build(git_ref: String[64], kind: uint8, verification: String[128
     assert self.product_builds[verification].product_id != 0
 
     self.product_builds[verification].kind = kind
-    self.product_builds[verification].verified = False
+    self.product_builds[verification].attestation = Attestation.outstanding
 
 #
 # Modify registered products
@@ -136,10 +141,16 @@ def set_critical(product_id: uint256, critical: bool):
 
 
 @external
-def add_attestation(verification: String[128]):
+def approve_attestation(verification: String[128]):
     # We have currently just a single official validator
     assert msg.sender == self.official_validator
-    self.product_builds[verification].verified = True
+    self.product_builds[verification].attestation = Attestation.approved
+
+@external
+def reject_attestation(verification: String[128]):
+    # We have currently just a single official validator
+    assert msg.sender == self.official_validator
+    self.product_builds[verification].attestation = Attestation.rejected
 
 #
 # Read-Only operations for everybody

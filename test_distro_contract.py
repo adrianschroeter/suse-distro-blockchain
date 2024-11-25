@@ -59,7 +59,20 @@ contract.set_critical(product_build[0], True)
 
 # Attestator approves
 boa.env.eoa = attestator.address
-contract.add_attestation(primary_sha)
+product_build = contract.get_product_build(primary_sha)
+if product_build[2] != 1:
+    print("Attestation is not outstanding")
+    exit(1)
+contract.reject_attestation(primary_sha)
+product_build = contract.get_product_build(primary_sha)
+if product_build[2] != 4:
+    print("Attestation is not rejected")
+    exit(1)
+contract.approve_attestation(primary_sha)
+product_build = contract.get_product_build(primary_sha)
+if product_build[2] != 2:
+    print("Attestation is not approved")
+    exit(1)
 
 # test address changes, take away permissions for everyone
 boa.env.eoa = foundation_owner.address
