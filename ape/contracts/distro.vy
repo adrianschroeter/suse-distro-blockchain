@@ -35,11 +35,12 @@ struct my_product :
 products: HashMap[uint256, my_product]
 
 # A product may be build in different forms. For example
-# an rpm-md tree, an install iso, kvm image or container.
+# a rpm-md tree, an install iso, kvm image or container.
 # Each of them need to become validated independend
 flag BuildKinds:
     rpmmd
     product
+    oci_container
 
 struct my_product_build :
     # as given on product create
@@ -51,6 +52,9 @@ product_builds: HashMap[String[128], my_product_build]
 
 current_verification: HashMap[String[19], String[128]]
 
+#
+# Managing the contract and roles
+#
 @deploy
 def __init__(_product_creator: address, _official_validator: address, _security_team: address):
     self.foundation_owner   = msg.sender
@@ -60,6 +64,27 @@ def __init__(_product_creator: address, _official_validator: address, _security_
     # zero product is currently used for not existing product
     self.next_product       = 1
 
+@external
+def set_product_creator(_product_creator: address):
+    # Only foundation owner is able to change roles
+    assert msg.sender == self.foundation_owner
+    self.product_creator    = _product_creator
+
+@external
+def set_official_validator(_official_validator: address):
+    # Only foundation owner is able to change roles
+    assert msg.sender == self.foundation_owner
+    self.official_validator    = _official_validator
+
+@external
+def set_security_team(_security_team: address):
+    # Only foundation owner is able to change roles
+    assert msg.sender == self.foundation_owner
+    self.security_team    = _security_team
+
+#
+# Register new products and builds
+#
 @external
 def add_product(name: String[16], git_ref: String[64]) -> uint256:
     # Only product creator is allowed to add a new product
@@ -100,6 +125,24 @@ def add_product_build(git_ref: String[64], kind: uint8, verification: String[128
     self.product_builds[verification].verified = False
 
 
+#
+# Modify registered products
+#
+@external
+def set_critical(product_id: uint256, critical: bool):
+    assert msg.sender == self.security_team
+    self.products[product_id].known_critical_issues = critical
+
+
+@external
+def add_attestation(verification: String[128]):
+    # We have currently just a single official validator
+    assert msg.sender == self.official_validator
+    self.product_builds[verification].verified = True
+
+#
+# Read-Only operations for everybody
+#
 @view
 @external
 def get_product(product_id: uint256) -> my_product:
@@ -120,17 +163,4 @@ def current_product_build(name: String[16], kind: uint8) -> String[128]:
 @external
 def get_product_counter() -> uint256:
     return self.next_product - 1
-
-@external
-def set_critical(product_id: uint256, critical: bool):
-    assert msg.sender == self.security_team
-    self.products[product_id].known_critical_issues = critical
-
-
-@external
-def add_attestation(verification: String[128]):
-    # We have currently just a single official validator
-    assert msg.sender == self.official_validator
-    self.product_builds[verification].verified = True
-
 
