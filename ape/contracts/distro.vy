@@ -64,23 +64,25 @@ def __init__(_product_creator: address, _official_validator: address, _security_
     # zero product is currently used for not existing product
     self.next_product       = 1
 
+# NOTE: allowing the address changes to the foundation_owner could be seen as breakage of zero-trust
+#       maybe this should require an approval from another party?
 @external
 def set_product_creator(_product_creator: address):
     # Only foundation owner is able to change roles
     assert msg.sender == self.foundation_owner
-    self.product_creator    = _product_creator
+    self.product_creator = _product_creator
 
 @external
 def set_official_validator(_official_validator: address):
     # Only foundation owner is able to change roles
     assert msg.sender == self.foundation_owner
-    self.official_validator    = _official_validator
+    self.official_validator = _official_validator
 
 @external
 def set_security_team(_security_team: address):
     # Only foundation owner is able to change roles
     assert msg.sender == self.foundation_owner
-    self.security_team    = _security_team
+    self.security_team = _security_team
 
 #
 # Register new products and builds
@@ -123,7 +125,6 @@ def add_product_build(git_ref: String[64], kind: uint8, verification: String[128
 
     self.product_builds[verification].kind = kind
     self.product_builds[verification].verified = False
-
 
 #
 # Modify registered products
