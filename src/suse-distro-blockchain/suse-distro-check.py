@@ -47,9 +47,7 @@ if w3.eth.syncing:
     exit(1)
 
 # contract abi, imported from compiler output
-abi = [{"stateMutability": "nonpayable", "type": "function", "name": "add_product", "inputs": [{"name": "name", "type": "string"}, {"name": "git_ref", "type": "string"}], "outputs": [{"name": "", "type": "uint256"}]}, {"stateMutability": "nonpayable", "type": "function", "name": "add_product_build", "inputs": [{"name": "git_ref", "type": "string"}, {"name": "kind", "type": "uint8"}, {"name": "verification", "type": "string"}], "outputs": []}, {"stateMutability": "view", "type": "function", "name": "get_product", "inputs": [{"name": "product_id", "type": "uint256"}], "outputs": [{"name": "", "type": "tuple", "components": [{"name": "name", "type": "string"}, {"name": "git_ref", "type": "string"}, {"name": "known_critical_issues", "type": "bool"}]}]}, {"stateMutability": "view", "type": "function", "name": "get_product_build", "inputs": [{"name": "verification", "type": "string"}], "outputs": [{"name": "", "type": "tuple", "components": [{"name": "product_id", "type": "uint256"}, {"name": "kind", "type": "uint8"}, {"name": "verified", "type": "bool"}]}]}, {"stateMutability": "view", "type": "function", "name": "current_product_build", "inputs": [{"name": "name", "type": "string"}, {"name": "kind", "type": "uint8"}], "outputs": [{"name": "", "type": "string"}]}, {"stateMutability": "view", "type": "function", "name": "get_product_counter", "inputs": [], "outputs": [{"name": "", "type": "uint256"}]}, {"stateMutability": "nonpayable", "type": "function", "name": "set_critical", "inputs": [{"name": "product_id", "type": "uint256"}, {"name": "critical", "type": "bool"}], "outputs": []}, {"stateMutability": "nonpayable", "type": "function", "name": "add_attestation", "inputs": [{"name": "verification", "type": "string"}], "outputs": []}, {"stateMutability": "view", "type": "function", "name": "foundation_owner", "inputs": [], "outputs": [{"name": "", "type": "address"}]}, {"stateMutability": "view", "type": "function", "name": "product_creator", "inputs": [], "outputs": [{"name": "", "type": "address"}]}, {"stateMutability": "view", "type": "function", "name": "official_validator", "inputs": [], "outputs": [{"name": "", "type": "address"}]}, {"stateMutability": "view", "type": "function", "name": "security_team", "inputs": [], "outputs": [{"name": "", "type": "address"}]}, {"stateMutability": "view", "type": "function", "name": "next_product", "inputs": [], "outputs": [{"name": "", "type": "uint256"}]}, {"stateMutability": "nonpayable", "type": "constructor", "inputs": [{"name": "_product_creator", "type": "address"}, {"name": "_official_validator", "type": "address"}, {"name": "_security_team", "type": "address"}], "outputs": []}]
-
-
+abi = [{"stateMutability": "nonpayable", "type": "function", "name": "set_product_creator", "inputs": [{"name": "_product_creator", "type": "address"}], "outputs": []}, {"stateMutability": "nonpayable", "type": "function", "name": "set_official_validator", "inputs": [{"name": "_official_validator", "type": "address"}], "outputs": []}, {"stateMutability": "nonpayable", "type": "function", "name": "set_security_team", "inputs": [{"name": "_security_team", "type": "address"}], "outputs": []}, {"stateMutability": "nonpayable", "type": "function", "name": "add_product", "inputs": [{"name": "name", "type": "string"}, {"name": "git_ref", "type": "string"}], "outputs": [{"name": "", "type": "uint256"}]}, {"stateMutability": "nonpayable", "type": "function", "name": "add_product_build", "inputs": [{"name": "git_ref", "type": "string"}, {"name": "kind", "type": "uint8"}, {"name": "verification", "type": "string"}], "outputs": []}, {"stateMutability": "nonpayable", "type": "function", "name": "set_critical", "inputs": [{"name": "product_id", "type": "uint256"}, {"name": "critical", "type": "bool"}], "outputs": []}, {"stateMutability": "nonpayable", "type": "function", "name": "approve_attestation", "inputs": [{"name": "verification", "type": "string"}], "outputs": []}, {"stateMutability": "nonpayable", "type": "function", "name": "reject_attestation", "inputs": [{"name": "verification", "type": "string"}], "outputs": []}, {"stateMutability": "view", "type": "function", "name": "get_product", "inputs": [{"name": "product_id", "type": "uint256"}], "outputs": [{"name": "", "type": "tuple", "components": [{"name": "name", "type": "string"}, {"name": "git_ref", "type": "string"}, {"name": "known_critical_issues", "type": "bool"}]}]}, {"stateMutability": "view", "type": "function", "name": "get_product_build", "inputs": [{"name": "verification", "type": "string"}], "outputs": [{"name": "", "type": "tuple", "components": [{"name": "product_id", "type": "uint256"}, {"name": "kind", "type": "uint8"}, {"name": "attestation", "type": "uint256"}]}]}, {"stateMutability": "view", "type": "function", "name": "current_product_build", "inputs": [{"name": "name", "type": "string"}, {"name": "kind", "type": "uint8"}], "outputs": [{"name": "", "type": "string"}]}, {"stateMutability": "view", "type": "function", "name": "get_product_counter", "inputs": [], "outputs": [{"name": "", "type": "uint256"}]}, {"stateMutability": "view", "type": "function", "name": "foundation_owner", "inputs": [], "outputs": [{"name": "", "type": "address"}]}, {"stateMutability": "view", "type": "function", "name": "product_creator", "inputs": [], "outputs": [{"name": "", "type": "address"}]}, {"stateMutability": "view", "type": "function", "name": "official_validator", "inputs": [], "outputs": [{"name": "", "type": "address"}]}, {"stateMutability": "view", "type": "function", "name": "security_team", "inputs": [], "outputs": [{"name": "", "type": "address"}]}, {"stateMutability": "view", "type": "function", "name": "next_product", "inputs": [], "outputs": [{"name": "", "type": "uint256"}]}, {"stateMutability": "nonpayable", "type": "constructor", "inputs": [{"name": "_product_creator", "type": "address"}, {"name": "_official_validator", "type": "address"}, {"name": "_security_team", "type": "address"}], "outputs": []}]
 
 contract = w3.eth.contract(address=contract_address, abi=abi)
 
@@ -131,6 +129,8 @@ def main(argv: List[str] = None) -> None:
                    exit_code=0
                    print(f"Selected product:         {product[0]}")
                    print(f"Used source SHA-256:      {product[1]}")
+                   #print(product)
+                   #print(build)
                    if build[1] == 0:
                        print("Build Type:               rpm-md")
                    else:
@@ -140,11 +140,17 @@ def main(argv: List[str] = None) -> None:
                        exit_code=1
                    else:
                        print(colored(f"No critical security issues reported", color="green"))
-                   if build[2]:
-                       print(colored(f"Same rebuild from source attestated:  {build[2]}", color="green"))
-                   else:
+                   if build[2] == 3:
+                       print(colored(f"Same rebuild from source REJECTED attestation!", color="red"))
+                       exit_code=1
+                   elif build[2] == 2:
+                       print(colored(f"Same rebuild from source attestated!", color="green"))
+                   elif build[2] == 1:
                        print(colored(f"Same rebuild not (yet) attestated", color="yellow"))
                        #exit_code=1 # to be configured by user
+                   else:
+                       print(colored(f"Invalid data in contract", color="red"))
+                       exit_code=1
 
                    print()
                    current_verification = contract.functions.current_product_build(product[0], build[1]).call()
