@@ -41,7 +41,7 @@ ape accounts import security_team
 To finally deploy the contract use
 ```bash
 cd ape
-ape run scripts/deploy_anvil.py --network http://localhost:8545
+ape run scripts/deploy_anvil.py --network http://localhost:8545 --balance 1
 ```
 
 On modifications of the contract run:
