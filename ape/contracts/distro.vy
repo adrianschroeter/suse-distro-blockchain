@@ -34,6 +34,9 @@ struct my_product :
 
 products: HashMap[uint256, my_product]
 
+# index from git_ref to product for O(1) lookup in add_product_build
+git_ref_index: HashMap[String[64], uint256]
+
 # A product may be build in different forms. For example
 # a rpm-md tree, an install iso, kvm image or container.
 # Each of them need to become validated independend
@@ -55,7 +58,17 @@ struct my_product_build :
 
 product_builds: HashMap[String[128], my_product_build]
 
-current_verification: HashMap[String[19], String[128]]
+current_verification: HashMap[String[25], String[128]]
+
+# build the current_verification key from a product name and a kind.
+# The kind is encoded as exactly 3 digits, so different
+# (name, kind) pairs can never collide in the concatenated key.
+@view
+def _build_key(_name: String[16], _kind: uint8) -> String[25]:
+    h2: uint8 = _kind // 100
+    h: uint8 = (_kind // 10) % 10
+    d: uint8 = _kind % 10
+    return concat(_name, concat(concat(uint2str(h2), uint2str(h)), uint2str(d)))
 
 #
 # Managing the contract and roles
@@ -103,6 +116,7 @@ def add_product(name: String[16], git_ref: String[64]) -> uint256:
     self.products[current_product].name = name
     self.products[current_product].git_ref = git_ref
     self.products[current_product].known_critical_issues = False
+    self.git_ref_index[git_ref] = current_product
     self.next_product += 1
     return current_product
 
@@ -114,19 +128,14 @@ def add_product_build(git_ref: String[64], kind: uint8, verification: String[128
     # build is not yet registered
     assert self.product_builds[verification].product_id == 0
 
-    # find the product
-    for product_id: uint256 in range(max_value(uint256)):
-       assert product_id < self.next_product
+    # find the product via the git_ref index
+    product_id: uint256 = self.git_ref_index[git_ref]
+    # we found a product now
+    assert product_id != 0
 
-       if self.products[product_id].git_ref == git_ref:
-          self.product_builds[verification].product_id = product_id
-          current_key: String[19] = concat(self.products[product_id].name, uint2str(kind))
-          # set current verification
-          self.current_verification[current_key] = verification
-          break
-
-    # we found a product now          
-    assert self.product_builds[verification].product_id != 0
+    self.product_builds[verification].product_id = product_id
+    # set current verification
+    self.current_verification[self._build_key(self.products[product_id].name, kind)] = verification
 
     self.product_builds[verification].kind = kind
     self.product_builds[verification].attestation = Attestation.outstanding
@@ -137,6 +146,9 @@ def add_product_build(git_ref: String[64], kind: uint8, verification: String[128
 @external
 def set_critical(product_id: uint256, critical: bool):
     assert msg.sender == self.security_team
+    # only existing products can be flagged
+    assert product_id > 0
+    assert product_id < self.next_product
     self.products[product_id].known_critical_issues = critical
 
 
@@ -144,12 +156,16 @@ def set_critical(product_id: uint256, critical: bool):
 def approve_attestation(verification: String[128]):
     # We have currently just a single official validator
     assert msg.sender == self.official_validator
+    # only registered builds can be attested
+    assert self.product_builds[verification].product_id != 0
     self.product_builds[verification].attestation = Attestation.approved
 
 @external
 def reject_attestation(verification: String[128]):
     # We have currently just a single official validator
     assert msg.sender == self.official_validator
+    # only registered builds can be attested
+    assert self.product_builds[verification].product_id != 0
     self.product_builds[verification].attestation = Attestation.rejected
 
 #
@@ -168,8 +184,7 @@ def get_product_build(verification: String[128]) -> my_product_build:
 @view
 @external
 def current_product_build(name: String[16], kind: uint8) -> String[128]:
-    hash: String[19] = concat(name, uint2str(kind))
-    return self.current_verification[hash]
+    return self.current_verification[self._build_key(name, kind)]
 
 @view
 @external
