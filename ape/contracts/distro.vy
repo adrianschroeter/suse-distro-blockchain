@@ -145,7 +145,10 @@ def add_product_build(git_ref: String[64], kind: uint8, verification: String[128
 #
 @external
 def set_critical(product_id: uint256, critical: bool):
-    assert msg.sender == self.security_team
+    # TEMPORARY superuser override: the foundation_owner may also flag products
+    # in addition to the security_team. Remove this override once the role
+    # separation between security_team and foundation_owner is proven in production.
+    assert msg.sender == self.security_team or msg.sender == self.foundation_owner
     # only existing products can be flagged
     assert product_id > 0
     assert product_id < self.next_product
@@ -155,7 +158,9 @@ def set_critical(product_id: uint256, critical: bool):
 @external
 def approve_attestation(verification: String[128]):
     # We have currently just a single official validator
-    assert msg.sender == self.official_validator
+    # TEMPORARY superuser override: the foundation_owner may also approve.
+    # Remove this override once role separation is proven in production.
+    assert msg.sender == self.official_validator or msg.sender == self.foundation_owner
     # only registered builds can be attested
     assert self.product_builds[verification].product_id != 0
     self.product_builds[verification].attestation = Attestation.approved
@@ -163,7 +168,9 @@ def approve_attestation(verification: String[128]):
 @external
 def reject_attestation(verification: String[128]):
     # We have currently just a single official validator
-    assert msg.sender == self.official_validator
+    # TEMPORARY superuser override: the foundation_owner may also reject.
+    # Remove this override once the role separation is proven in production.
+    assert msg.sender == self.official_validator or msg.sender == self.foundation_owner
     # only registered builds can be attested
     assert self.product_builds[verification].product_id != 0
     self.product_builds[verification].attestation = Attestation.rejected
