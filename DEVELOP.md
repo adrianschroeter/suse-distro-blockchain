@@ -8,6 +8,72 @@ DO THIS IN A RESERVED VM!
 
 (todo: package the development env)
 
+## distro_tool.py - public git safe CLI
+
+`ape/distro_tool.py` is the production CLI to register product releases and to
+deploy the attestation contract. It contains no credentials and is safe to
+commit to a public git repository.
+
+Dependencies:
+```bash
+pipx install web3 eth-account      # for real networks
+pipx install web3 eth-account eth-tester   # + --network tester for local runs
+```
+
+Signing key is read at run time from the `PRIVATE_KEY` environment variable or
+from a file passed with `--key-file`. Network settings (RPC provider, chain id,
+contract address) come from `suse-distro-check.conf` and can be overridden with
+`--provider`, `--chain-id`, `--contract` or the `HTTP_PROVIDER_URL` / `CHAIN_ID`
+/ `CONTRACT_ADDRESS` environment variables.
+
+### Contract build artifact
+
+`distro_tool.py` does not embed the ABI/bytecode anymore. They are generated at
+build time from `ape/contracts/distro.vy` into `ape/distro_contract.py`
+(git-ignored) by `ape/build_contract.py`:
+
+```bash
+make contract-build        # regenerate ape/distro_contract.py
+make contract-check        # fail if the artifact is stale (for CI)
+```
+
+Requires vyper 0.4.x (as a python module or the `vyper` CLI). If the artifact is
+missing, or the contract source changed since it was built, `distro_tool.py`
+refuses to run and prints the rebuild command. `make contract-check` fails with
+a non-zero exit code on a stale artifact, so you can gate CI on it.
+
+Examples:
+
+```bash
+# deploy a contract; the deployer becomes foundation_owner
+python3 ape/distro_tool.py --network holesky deploy \
+    --creator 0xACCOUNT_PRODUCT_CREATOR \
+    --validator 0xACCOUNT_OFFICIAL_VALIDATOR \
+    --security 0xACCOUNT_SECURITY_TEAM
+
+# register a product and its build (product_creator role)
+export PRIVATE_KEY=0x...
+python3 ape/distro_tool.py --network holesky add-product SLFO-1.1 <git sha256>
+python3 ape/distro_tool.py --network holesky add-build <git sha256> rpmmd <sha512>
+
+# validator / security roles
+python3 ape/distro_tool.py approve <sha512>
+python3 ape/distro_tool.py reject <sha512>
+python3 ape/distro_tool.py set-critical 1 true
+
+# read-only
+python3 ape/distro_tool.py roles
+python3 ape/distro_tool.py show 1
+python3 ape/distro_tool.py current SLFO-1.1 rpmmd
+
+# local test network (no RPC needed)
+python3 ape/distro_tool.py --network tester deploy --creator ... --validator ... --security ...
+```
+
+## Ape based development
+
+End-to-end tests of the contract live in `test_distro_contract.py` (boa based).
+
 ```bash
 python3 -m venv ./myv
 ```
