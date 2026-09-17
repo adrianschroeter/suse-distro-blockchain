@@ -21,4 +21,11 @@ env.local
 __pycache__/
 *.py[cod]
 *$py.class
+build/
+dist/
+*.egg-info
+# Generated contract artifact and source copy for the installable package
+# (rebuilt by ape/build_contract.py / make contract-build)
+src/suse_distro_blockchain/distro_contract.py
+src/suse_distro_blockchain/contracts/
 

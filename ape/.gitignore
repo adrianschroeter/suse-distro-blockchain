@@ -2,9 +2,6 @@
 .build/
 .cache/
 
-# Generated build artifact (rebuilt by build_contract.py / make contract-build)
-distro_contract.py
-
 # Python
 .env
 .venv

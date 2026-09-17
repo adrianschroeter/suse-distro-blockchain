@@ -1,49 +1,55 @@
-[tool.poetry]
-name = "repository-check"
-version = "0.0.1"
+# Packaging for suse-distro-blockchain.
+#
+# Uses setuptools with PEP 621 metadata. Installing the built wheel (or this
+# directory) provides the console scripts `suse-distro-check` and `distro_tool`.
+#
+# Before building the wheel, generate the contract artifact so it is included:
+#   python3 ape/build_contract.py   (or: make contract-build)
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "suse-distro-blockchain"
+version = "0.0.2"
 description = "A tool to verify the state of current used repositories"
-authors = ["Adrian Schroeter <adrian@suse.de>"]
-license = "GPLv3"
 readme = "README.md"
-exclude = ["pyremix", "ape"]
-packages = [
-    { include = "suse-distro-blockchain", from = "src" },
+requires-python = ">=3.12"
+authors = [
+    { name = "Adrian Schroeter", email = "adrian@suse.de" },
 ]
-#documentation = "http://.readthedocs.io"
-repository = "https://github.com/adrianschroeter/suse-distro-blockchain"
+license = { text = "GPL-3.0-or-later" }
+dependencies = [
+    "web3>=7.5.0,<8",
+    "eth-account",
+    "iniparse",
+    "termcolor",
+]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "Topic :: System :: Networking"
+    "Topic :: System :: Networking",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
 ]
 
-[tool.poetry.scripts]
-distro-repository-check = "suse-distro-check:main"
+[project.scripts]
+suse-distro-check = "suse_distro_blockchain.suse_distro_check:main"
+distro_tool = "suse_distro_blockchain.distro_tool:main"
 
-[tool.poetry.dependencies]
-python = "^3.12"
-web3 = "^7.5.0"
+[project.optional-dependencies]
+tester = ["eth-tester"]
 
-[tool.poetry.dev-dependencies]
-black = "^19.10b0"
-flake8 = "^3.9.0"
-flake8-docstrings = "^1.6.0"
-flake8-import-order = "^0.18.1"
-pytest = "^6.2.3"
-pytest-cov = "^2.11.1"
-sphinx = "^3.5.3"
-sphinx-rtd-theme = "^0.5.1"
-mypy = "^0.812"
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+suse_distro_blockchain = ["contracts/*.vy"]
 
 [tool.coverage.run]
 branch = true
-source = ["suse-distro-check"]
+source = ["suse_distro_blockchain"]
 
 [tool.coverage.report]
 show_missing = true
-
-[build-system]
-requires = ["poetry-core"]
-#build-backend = "poetry.core.masonry.api"
-

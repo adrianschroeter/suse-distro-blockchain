@@ -4,8 +4,10 @@
 # build_contract.py - generate the contract artifact for distro_tool.py
 #
 # Compiles the vyper contract (ape/contracts/distro.vy) and writes a python
-# module (ape/distro_contract.py) holding CONTRACT_ABI and CONTRACT_BYTECODE,
-# so distro_tool.py never ships hand-embedded, possibly stale data.
+# module (src/suse_distro_blockchain/distro_contract.py) holding CONTRACT_ABI
+# and CONTRACT_BYTECODE, plus a copy of the contract source next to it as
+# package data, so distro_tool.py never ships hand-embedded, possibly stale
+# data.
 #
 # Usage:
 #   python3 ape/build_contract.py          (repo root)
@@ -19,13 +21,21 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(os.path.realpath(__file__)))
 
 DEFAULT_SOURCE = os.path.join(HERE, "contracts", "distro.vy")
-DEFAULT_OUTPUT = os.path.join(HERE, "distro_contract.py")
+DEFAULT_OUTPUT = os.path.join(
+    HERE, os.pardir, "src", "suse_distro_blockchain", "distro_contract.py"
+)
+
+# Path of the contract source copy inside the installable package, relative to
+# the generated artifact. distro_tool.py compares this copy to verify the
+# artifact is current, both in the source tree and when installed.
+PACKAGE_SOURCE_REL = os.path.join("contracts", "distro.vy")
 
 HEADER = (
     "# SPDX-License-Identifier: GPL-3.0-or-later\n"
@@ -65,7 +75,7 @@ def compile_with_vyper_cli(source_path):
         )
     except FileNotFoundError:
         sys.exit(
-            "vyper is required to build ape/distro_contract.py.\n"
+            "vyper is required to build the distro_contract.py artifact.\n"
             "  Install vyper 0.4.x (e.g. pip install vyper==0.4.0) or invoke via\n"
             "  a python that has vyper available, e.g.:\n"
             "    make contract-build PYTHON=/path/to/venv/bin/python"
@@ -111,7 +121,8 @@ def read_artifact(path):
 def main():
     ap = argparse.ArgumentParser(
         prog="build_contract.py",
-        description="Generate ape/distro_contract.py from the vyper contract source.",
+        description="Generate the distro_contract.py artifact for distro_tool.py "
+        "from the vyper contract source.",
     )
     ap.add_argument("-o", "--output", default=DEFAULT_OUTPUT, help="output module path")
     ap.add_argument("--source", default=DEFAULT_SOURCE, help="vyper contract source path")
@@ -141,15 +152,18 @@ def main():
     with open(source_abs) as f:
         source_text = f.read()
     abi, bytecode = compile_contract(source_abs, source_text)
-    source_rel = os.path.relpath(source_abs, os.path.dirname(output_abs))
-    src_dir = os.path.dirname(output_abs)
-    if src_dir:
-        os.makedirs(src_dir, exist_ok=True)
+    out_dir = os.path.dirname(output_abs)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    pkg_source_abs = os.path.join(out_dir, PACKAGE_SOURCE_REL)
+    os.makedirs(os.path.dirname(pkg_source_abs), exist_ok=True)
+    shutil.copyfile(source_abs, pkg_source_abs)
     with open(output_abs, "w") as f:
-        f.write(render_module(source_rel, source_sha, abi, bytecode))
+        f.write(render_module(PACKAGE_SOURCE_REL, source_sha, abi, bytecode))
     if not args.quiet:
         print(f"Wrote {output_abs}")
         print(f"  source  : {source_abs} ({source_sha[:12]}…)")
+        print(f"  copy    : {pkg_source_abs}")
         print(f"  abi     : {len(abi)} entries")
         print(f"  bytecode: {(len(bytecode) - 2) // 2} bytes")
     return 0
