@@ -83,9 +83,15 @@ def validate_git_ref(r):
     return r
 
 
+MAX_VERIFICATION_LEN = 128  # fits sha512 (128 hex chars)
+
+
 def validate_verification(v):
-    if not is_hex(v) or not (0 < len(v) <= 128):
-        sys.exit("verification must be hex, 1-128 chars.")
+    if not is_hex(v) or not (0 < len(v) <= MAX_VERIFICATION_LEN):
+        sys.exit(
+            f"verification must be 1-{MAX_VERIFICATION_LEN} hex chars "
+            "(sha512 = 128, sha256 = 64)."
+        )
     return v
 
 
