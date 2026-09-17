@@ -63,7 +63,16 @@ Verify the deployed contract and default roles:
 python3 ape/distro_tool.py --network hoodi --contract 0xADDRESS roles
 ```
 
+Limitations: Everybody can deploy a contract, but the contract address is
+unique for each deployment. Verification of a product will only happen via
+an agreed conctract address.
+
+One contract can support multiple products, but each product could also use
+an own contract.
+
 ## 2. Register a new build
+
+Limitations: This only works for the registered builder account in the contract.
 
 Registering has two steps: create the product, then attach a build to it.
 
@@ -107,6 +116,8 @@ python3 ape/distro_tool.py --network hoodi --contract 0xADDRESS current SLFO-1.1
 
 ## 3. Approve or reject a product build attestation
 
+Limitations: This only works for the registered validator account in the contract.
+
 The `official_validator` audits the registered build for
 **reproducibility**: the `verification` digest must be reproducible from the
 published sources (git_ref). Then the attestation state is set:
@@ -131,6 +142,8 @@ python3 ape/distro_tool.py --network hoodi --contract 0xADDRESS build <verificat
 ```
 
 ## 4. Set the security critical state
+
+Limitations: This only works for the registered security account in the contract.
 
 The `security_team` flags a product as having known critical issues. Set it
 `true` to warn users via the verification UI, `false` to clear it:

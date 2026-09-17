@@ -12,6 +12,7 @@
 
 import argparse, configparser, hashlib, os, sys
 from web3 import Web3
+from web3.exceptions import ContractLogicError
 from eth_account import Account
 
 try:
@@ -175,17 +176,26 @@ def send_tx(w3, acct, fn_obj, gas=None):
         sys.exit("No signing key. Set PRIVATE_KEY or --key-file.")
     sender = acct.address
     nonce = w3.eth.get_transaction_count(sender, "pending")
-    tx = fn_obj.build_transaction({
-        "from": sender, "nonce": nonce, "chainId": w3.eth.chain_id,
-    })
     if gas:
-        tx["gas"] = gas
+        est_gas = gas
     else:
         try:
-            tx["gas"] = int(fn_obj.estimate_gas({"from": sender}) * 1.2) + 1
+            est_gas = int(fn_obj.estimate_gas({"from": sender}) * 1.2) + 1
+        except ContractLogicError as e:
+            reason = str(e).strip() or "execution reverted"
+            sys.exit(
+                f"Transaction would revert: {reason}\n"
+                f"  function : {getattr(fn_obj, 'fn_name', '?')}\n"
+                f"  from     : {sender}\n"
+                "  The signing account may be missing the required role.\n"
+                "  Check roles with the 'roles' command (or pass --gas to force)."
+            )
         except Exception as e:
-            tx["gas"] = 200000
-            print(f"Warning: gas estimation failed ({e}), using {tx['gas']}")
+            print(f"Warning: gas estimation failed ({e}), using 200000")
+            est_gas = 200000
+    tx = fn_obj.build_transaction({
+        "from": sender, "nonce": nonce, "chainId": w3.eth.chain_id, "gas": est_gas,
+    })
     signed = acct.sign_transaction(tx)
     raw = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
     txh = w3.eth.send_raw_transaction(raw)
