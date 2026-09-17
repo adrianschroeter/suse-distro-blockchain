@@ -3,8 +3,9 @@
 # Uses setuptools with PEP 621 metadata. Installing the built wheel (or this
 # directory) provides the console scripts `suse-distro-check` and `distro_tool`.
 #
-# Before building the wheel, generate the contract artifact so it is included:
-#   python3 ape/build_contract.py   (or: make contract-build)
+# The generated contract artifact (distro_contract.py + contracts/distro.vy copy)
+# is committed, so the wheel build needs no extra step. After contract changes
+# run `make contract-build` and commit the regenerated files.
 
 [build-system]
 requires = ["setuptools>=61"]

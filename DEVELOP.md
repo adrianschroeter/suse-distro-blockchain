@@ -33,23 +33,29 @@ contract address) come from `suse-distro-check.conf` and can be overridden with
 
 ### Contract build artifact
 
-`distro_tool` does not embed the ABI/bytecode. They are generated at build
-time from `ape/contracts/distro.vy` into
-`src/suse_distro_blockchain/distro_contract.py` (git-ignored), together with a
-copy of the contract source as package data, by `ape/build_contract.py`:
+`distro_tool` does not embed the ABI/bytecode. They are generated from
+`ape/contracts/distro.vy` into `src/suse_distro_blockchain/distro_contract.py`,
+together with a copy of the contract source as package data, by
+`ape/build_contract.py`:
 
 ```bash
 make contract-build        # regenerate the artifact + source copy
-make contract-check        # fail if the artifact is stale (for CI)
+make contract-check        # fail if the artifact or source copy is stale (for CI)
 ```
 
-Requires vyper 0.4.x (as a python module or the `vyper` CLI). If the artifact is
-missing, or the contract source changed since it was built, `distro_tool`
-refuses to run and prints the rebuild command. `make contract-check` fails with
-a non-zero exit code on a stale artifact, so you can gate CI on it. When the
-tool is installed without the vyper source (e.g. from an rpm without the
-packaged source copy), the compiled artifact is authoritative and the check is
-skipped.
+Both generated files are committed so every wheel build ships them - the rpm
+build does not need vyper. `make contract-build` is a no-op (exit 0, vyper is
+never invoked) when the artifact is already current, so it is safe to run
+unconditionally, including in the rpm `%build`. After any contract change, run
+`make contract-build` and commit the regenerated files; CI must gate on
+`make contract-check`, which verifies the artifact and the packaged source
+copy against `ape/contracts/distro.vy`.
+
+Requires vyper 0.4.x (as a python module or the `vyper` CLI) to regenerate. If
+the artifact is missing, or the contract source changed since it was built,
+`distro_tool` refuses to run and prints the rebuild command. When the tool is
+installed without the vyper source, the compiled artifact is authoritative and
+the check is skipped.
 
 ### RPM / wheel packaging
 

@@ -118,6 +118,20 @@ def read_artifact(path):
     return module
 
 
+def _artifact_current(output_abs, source_sha):
+    """True when the artifact and packaged source copy match the source."""
+    if not os.path.exists(output_abs):
+        return False
+    try:
+        artifact = read_artifact(output_abs)
+    except Exception:
+        return False
+    if artifact.get("CONTRACT_SHA256") != source_sha:
+        return False
+    pkg_source = os.path.join(os.path.dirname(output_abs), PACKAGE_SOURCE_REL)
+    return os.path.exists(pkg_source) and sha256_file(pkg_source) == source_sha
+
+
 def main():
     ap = argparse.ArgumentParser(
         prog="build_contract.py",
@@ -136,6 +150,13 @@ def main():
         sys.exit(f"Contract source not found: {source_abs}")
     source_sha = sha256_file(source_abs)
 
+    if not args.check and _artifact_current(output_abs, source_sha):
+        # Nothing changed: no vyper invocation needed. This keeps the target
+        # safe to run in build environments without a working vyper.
+        if not args.quiet:
+            print(f"OK: {output_abs} is up to date, nothing to do")
+        return 0
+
     if args.check:
         if not os.path.exists(output_abs):
             sys.exit(f"Artifact missing: {output_abs} (run: python3 ape/build_contract.py)")
@@ -143,6 +164,12 @@ def main():
         if artifact.get("CONTRACT_SHA256") != source_sha:
             sys.exit(
                 f"Artifact {output_abs} is stale: contract source changed since it was built.\n"
+                "  Rebuild: python3 ape/build_contract.py   (or: make contract-build)"
+            )
+        pkg_source_abs = os.path.join(os.path.dirname(output_abs), PACKAGE_SOURCE_REL)
+        if not os.path.exists(pkg_source_abs) or sha256_file(pkg_source_abs) != source_sha:
+            sys.exit(
+                f"Packaged source copy {pkg_source_abs} is missing or stale.\n"
                 "  Rebuild: python3 ape/build_contract.py   (or: make contract-build)"
             )
         if not args.quiet:
