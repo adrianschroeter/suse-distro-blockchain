@@ -314,7 +314,7 @@ def build_parser():
         prog="distro_tool.py",
         description="openSUSE distro attestation contract CLI.",
     )
-    p.add_argument("--network", default="holesky")
+    p.add_argument("--network", default="sepolia")
     p.add_argument("--conf", default=CONF_PATH)
     p.add_argument("--provider")
     p.add_argument("--chain-id", type=int)

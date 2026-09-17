@@ -46,15 +46,15 @@ Examples:
 
 ```bash
 # deploy a contract; the deployer becomes foundation_owner
-python3 ape/distro_tool.py --network holesky deploy \
+python3 ape/distro_tool.py --network sepolia deploy \
     --creator 0xACCOUNT_PRODUCT_CREATOR \
     --validator 0xACCOUNT_OFFICIAL_VALIDATOR \
     --security 0xACCOUNT_SECURITY_TEAM
 
 # register a product and its build (product_creator role)
 export PRIVATE_KEY=0x...
-python3 ape/distro_tool.py --network holesky add-product SLFO-1.1 <git sha256>
-python3 ape/distro_tool.py --network holesky add-build <git sha256> rpmmd <sha512>
+python3 ape/distro_tool.py --network sepolia add-product SLFO-1.1 <git sha256>
+python3 ape/distro_tool.py --network sepolia add-build <git sha256> rpmmd <sha512>
 
 # validator / security roles
 python3 ape/distro_tool.py approve <sha512>

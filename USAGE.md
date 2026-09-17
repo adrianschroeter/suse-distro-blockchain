@@ -18,7 +18,7 @@ pipx install web3 eth-account
 make contract-build
 
 # 3. (defaults) network presets are read from suse-distro-check.conf:
-#    hoodi, holesky, mainnet, anvil
+#    hoodi, sepolia, mainnet, anvil
 ```
 
 Each write operation prints the transaction hash, gas used and a
@@ -29,7 +29,7 @@ Each write operation prints the transaction hash, gas used and a
 
 | option | meaning |
 | --- | --- |
-| `--network <name>` | preset from `suse-distro-check.conf`; default `holesky`. Example conf networks: `hoodi`, `holesky`, `mainnet`, `anvil` |
+| `--network <name>` | preset from `suse-distro-check.conf`; default `sepolia`. Example conf networks: `hoodi`, `sepolia`, `mainnet`, `anvil` |
 | `--provider <url>` | override RPC provider |
 | `--chain-id <id>` | expect this chain id, abort otherwise |
 | `--contract <addr>` | contract address override |
