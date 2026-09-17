@@ -47,7 +47,7 @@ Examples:
 ```bash
 # deploy a contract; the deployer becomes foundation_owner
 python3 ape/distro_tool.py --network sepolia deploy \
-    --creator 0xACCOUNT_PRODUCT_CREATOR \
+    --builder 0xACCOUNT_PRODUCT_BUILDER \
     --validator 0xACCOUNT_OFFICIAL_VALIDATOR \
     --security 0xACCOUNT_SECURITY_TEAM
 
@@ -67,7 +67,7 @@ python3 ape/distro_tool.py show 1
 python3 ape/distro_tool.py current SLFO-1.1 rpmmd
 
 # local test network (no RPC needed)
-python3 ape/distro_tool.py --network tester deploy --creator ... --validator ... --security ...
+python3 ape/distro_tool.py --network tester deploy --builder ... --validator ... --security ...
 ```
 
 ## Ape based development
@@ -100,7 +100,7 @@ anvil chain.
 ```bash
 ape accounts import foundation
 ape accounts import product_creator
-ape accounts import attestator
+ape accounts import validator
 ape accounts import security_team
 ```
 

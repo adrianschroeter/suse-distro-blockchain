@@ -42,8 +42,8 @@ def main():
     # additional accounts
     product_creator_account = accounts.load("product_creator") 
     print(f'The product creator account balance is: {foundation_account.balance / 1e18} ETH')
-    attestator_account = accounts.load("attestator") 
-    print(f'The attestator account balance is: {foundation_account.balance / 1e18} ETH')
+    validator_account = accounts.load("validator") 
+    print(f'The validator account balance is: {foundation_account.balance / 1e18} ETH')
     security_team_account = accounts.load("security_team") 
     print(f'The security team account balance is: {foundation_account.balance / 1e18} ETH')
 
@@ -53,7 +53,7 @@ def main():
 
     # Deploy the smart contract and print a message 
     contract_class = getattr(project, contract_name)
-    deployed_contract = foundation_account.deploy(contract_class, product_creator_account, attestator_account, security_team_account)
+    deployed_contract = foundation_account.deploy(contract_class, product_creator_account, validator_account, security_team_account)
     print("Contract deployed!") 
     contract_address = deployed_contract.address
 

@@ -7,7 +7,7 @@ TODO (before production)
 
 * Adding examples and tooling to support container attestations.
 
-* Currently each party (foundation, builder, attestor) is a single signer.
+* Currently each party (foundation, builder, validator) is a single signer.
   We need to cover groups here in a way that at least critical operations
   need multiple parties of the group.
 

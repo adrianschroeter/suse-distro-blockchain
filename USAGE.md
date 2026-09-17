@@ -42,12 +42,13 @@ Globals go **before** the subcommand, e.g.
 ## 1. Deploy a contract instance
 
 The deploying account becomes the `foundation_owner`. The other three roles are
-passed at construction time.
+passed at construction time. The `--builder` address becomes the on-chain
+`product_creator` role.
 
 ```bash
 python3 ape/distro_tool.py --network hoodi \
     deploy \
-    --creator  0xADDRESS_PRODUCT_CREATOR \
+    --builder   0xADDRESS_PRODUCT_BUILDER \
     --validator 0xADDRESS_OFFICIAL_VALIDATOR \
     --security  0xADDRESS_SECURITY_TEAM
 ```
@@ -106,7 +107,7 @@ python3 ape/distro_tool.py --network hoodi --contract 0xADDRESS current SLFO-1.1
 
 ## 3. Approve or reject a product build attestation
 
-The `official_validator` (attestator) audits the registered build for
+The `official_validator` audits the registered build for
 **reproducibility**: the `verification` digest must be reproducible from the
 published sources (git_ref). Then the attestation state is set:
 
@@ -154,7 +155,7 @@ python3 ape/distro_tool.py --network hoodi --contract 0xADDRESS show 1
 
 ```bash
 python3 ape/distro_tool.py --network tester deploy \
-    --creator 0xADDRESS_PRODUCT_CREATOR \
+    --builder   0xADDRESS_PRODUCT_BUILDER \
     --validator 0xADDRESS_OFFICIAL_VALIDATOR \
     --security  0xADDRESS_SECURITY_TEAM
 ```

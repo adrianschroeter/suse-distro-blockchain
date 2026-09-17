@@ -198,9 +198,9 @@ def send_tx(w3, acct, fn_obj, gas=None):
     return rc
 
 
-def deploy_contract(w3, acct, creator, validator, security):
+def deploy_contract(w3, acct, builder, validator, security):
     w3c = w3.eth.contract(abi=CONTRACT_ABI, bytecode=CONTRACT_BYTECODE)
-    fn = w3c.constructor(creator, validator, security)
+    fn = w3c.constructor(builder, validator, security)
     rc = send_tx(w3, acct, fn)
     if rc.get("status") == 1:
         print(f"deployed: {rc.get('contractAddress')}")
@@ -251,7 +251,7 @@ def do_current(w3, c, args):
 # -- write commands -----------------------------------------------------------
 
 def do_deploy(w3, _c, args):
-    for lbl, val in [("creator", args.creator), ("validator", args.validator), ("security", args.security)]:
+    for lbl, val in [("builder", args.builder), ("validator", args.validator), ("security", args.security)]:
         if not Web3.is_address(val):
             sys.exit(f"Invalid {lbl} address: {val}")
     if not prompt(args, "Deploy new contract?"):
@@ -259,7 +259,7 @@ def do_deploy(w3, _c, args):
     acct = get_signer(w3, args)
     if acct is None:
         sys.exit("No signing key for deploy. Set PRIVATE_KEY or --key-file.")
-    deploy_contract(w3, acct, args.creator, args.validator, args.security)
+    deploy_contract(w3, acct, args.builder, args.validator, args.security)
 
 
 def do_add_product(w3, c, args):
@@ -325,7 +325,7 @@ def build_parser():
     sub = p.add_subparsers(dest="command", required=True)
 
     s = sub.add_parser("deploy")
-    s.add_argument("--creator", required=True)
+    s.add_argument("--builder", required=True)
     s.add_argument("--validator", required=True)
     s.add_argument("--security", required=True)
     s.set_defaults(func=do_deploy)

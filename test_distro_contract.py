@@ -12,14 +12,14 @@ build_kind=1
 
 # our roles
 foundation_owner = Account.create('KEYSMASH FJAFJKLDSKF7JKFDJ 1530')
-attestator = Account.create('KEYSMASH AJFFJKLDSKF7JKFDJ 1531')
+validator = Account.create('KEYSMASH AJFFJKLDSKF7JKFDJ 1531')
 security_team = Account.create('KEYSMASH AAAFJKLDSKF7JKFDJ 1532')
 product_creator = Account.create('KEYSMASH BBBFJKLDSKF7JKFDJ 1533')
 random_guy = Account.create('KEYSMASH FFFFJKLDSKF7JKFDJ 1534')
 
 # deploy our contract
 boa.env.eoa = foundation_owner.address
-contract = boa.load('ape/contracts/distro.vy', product_creator.address, attestator.address, security_team.address)
+contract = boa.load('ape/contracts/distro.vy', product_creator.address, validator.address, security_team.address)
 
 #
 # Register a product build
@@ -57,8 +57,8 @@ print("Product is verified to be current")
 boa.env.eoa = security_team.address
 contract.set_critical(product_build[0], True)
 
-# Attestator approves
-boa.env.eoa = attestator.address
+# Validator approves
+boa.env.eoa = validator.address
 product_build = contract.get_product_build(primary_sha)
 if product_build[2] != 1:
     print("Attestation is not outstanding")
