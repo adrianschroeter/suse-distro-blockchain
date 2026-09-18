@@ -14,3 +14,5 @@ TODO (before production)
   This could be achieved either by extending the distribution contract
   or via additional contracts one for each group.
 
+* Support checking against via multiple RPC nodes.
+
