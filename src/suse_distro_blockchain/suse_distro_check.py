@@ -76,6 +76,8 @@ def main(argv: List[str] = None) -> None:
 
     repos = []
     reposdirs = [ "/etc/zypp/repos.d" ]
+    exit_code = 0
+    matched_aliases = []
     for reposdir in reposdirs:
       if not os.path.isdir(reposdir):
         continue
@@ -83,8 +85,11 @@ def main(argv: List[str] = None) -> None:
         repocfg = INIConfig(open(reponame))
 
         for alias in repocfg:
-            if len(args.aliases) > 0 and not alias in args.aliases[0]:
+            if len(args.aliases) == 0:
                 continue
+            if not any(requested in alias or alias in requested for requested in args.aliases):
+                continue
+            matched_aliases.append(alias)
 
             repoattr = {'enabled': 0, 'priority': 99, 'autorefresh': 1, 'type': 'rpm-md', 'metadata_expire': 900}
             for k in repocfg[alias]:
@@ -98,70 +103,111 @@ def main(argv: List[str] = None) -> None:
 
                 if not os.path.exists(rpmmd):
                     print(f"Warning: skipping {rpmmd}")
+                    exit_code = exit_code or 2
                     continue
 
                 print(f"Reading {rpmmd}")
                 xml = parse(rpmmd)
 
                 for data in xml.getElementsByTagName("data"):
-                   if data.getAttribute("type") != "primary":
-                       continue
-                   cksum = data.getElementsByTagName("checksum")[0]
-                   cksum_type = cksum.getAttribute("type")
-                   if cksum_type != "sha256" and cksum_type != "sha512":
-                       print(f"Warning: skipping {rpmmd}, not supported checksum type")
-                       continue
-                   verification = cksum.firstChild.nodeValue
+                    if data.getAttribute("type") != "primary":
+                        continue
+                    cksum = data.getElementsByTagName("checksum")[0]
+                    cksum_type = cksum.getAttribute("type")
+                    if cksum_type != "sha256" and cksum_type != "sha512":
+                        print(f"Warning: skipping {rpmmd}, not supported checksum type")
+                        exit_code = exit_code or 2
+                        continue
+                    verification = cksum.firstChild.nodeValue
 
-                   # We have the checksum of our primary file, now ask the blockchain
-                   try:
-                       build = contract.functions.get_product_build(verification).call()
-                   except:
-                       print(f"Warning: repo not registered in the block chain with verification id {verification}")
-                       continue
-                   # we get always an empty product atm when it is not matching
-                   if build[0] == 0:
-                       print(f"Warning: repo not registered in the block chain with id {verification}")
-                       continue
+                    # We have the checksum of our primary file, now ask the blockchain
+                    try:
+                        build = contract.functions.get_product_build(verification).call()
+                    except Exception:
+                        print(f"Warning: repo not registered in the blockchain with verification id {verification}")
+                        exit_code = exit_code or 2
+                        continue
+                    # we get always an empty product atm when it is not matching
+                    if build[0] == 0:
+                        print(f"Warning: repo not registered in the blockchain with id {verification}")
+                        exit_code = exit_code or 2
+                        continue
 
-                   product = contract.functions.get_product(build[0]).call()
-                   
-                   exit_code=0
-                   print(f"Selected product:         {product[0]}")
-                   print(f"Used source SHA-256:      {product[1]}")
-                   #print(product)
-                   #print(build)
-                   if build[1] == 0:
-                       print("Build Type:               rpm-md")
-                   else:
-                       print("Build Type:               UNKNOWN")
-                   if product[2]:
-                       print(colored(f"ERROR: Critical security issues reported", color="red"))
-                       exit_code=1
-                   else:
-                       print(colored(f"No critical security issues reported", color="green"))
-                   if build[2] == 3:
-                       print(colored(f"Same rebuild from source REJECTED attestation!", color="red"))
-                       exit_code=1
-                   elif build[2] == 2:
-                       print(colored(f"Same rebuild from source attestated!", color="green"))
-                   elif build[2] == 1:
-                       print(colored(f"Same rebuild not (yet) attestated", color="yellow"))
-                       #exit_code=1 # to be configured by user
-                   else:
-                       print(colored(f"Invalid data in contract", color="red"))
-                       exit_code=1
+                    product = contract.functions.get_product(build[0]).call()
 
-                   print()
-                   current_verification = contract.functions.current_product_build(product[0], build[1]).call()
-                   if verification == current_verification:
-                       print(colored("The contract proofed your repository cache as current state :)", color="green"))
-                   else:
-                       print(colored(f"ERROR: The contract has different current state registered: {current_verification}", color="red"))
-                       exit_code=1
-                   exit(exit_code)
+                    BUILD_KIND_NAMES = {1: "rpmmd", 2: "product", 4: "oci_container"}
+                    ATTESTATION_TEXT = {
+                        1: ("outstanding", "yellow", "Build not yet verified by the official validator."),
+                        2: ("approved", "green", "Build reproducibility verified by the official validator."),
+                        4: ("rejected", "red", "Build reproducibility check REJECTED by the official validator."),
+                    }
+
+                    print()
+                    print(colored("Repository hash found in blockchain contract.", color="green", attrs=["bold"]))
+                    print()
+                    print(f"  Product name       : {product[0]}")
+                    print(f"  Source commit      : {product[1]}")
+
+                    # Digest of the empty string, independent of the chosen hash
+                    # algorithm - a strong hint the git_ref is bogus/not a real commit.
+                    EMPTY_STRING_DIGESTS = {
+                        "MD5": "d41d8cd98f00b204e9800998ecf8427e",
+                        "SHA-1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+                        "SHA-256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    }
+                    if len(product[1]) < 64:
+                        print(
+                            colored(
+                                f"  WARNING: Source commit is only {len(product[1])} hex chars, "
+                                "shorter than a SHA-256 checksum (64)",
+                                color="yellow",
+                            )
+                        )
+                    for algo, digest in EMPTY_STRING_DIGESTS.items():
+                        if len(product[1]) == len(digest) and product[1].lower() == digest:
+                            print(
+                                colored(
+                                    f"  WARNING: Source commit equals the {algo} digest of the empty string",
+                                    color="yellow",
+                                )
+                            )
+
+                    print(f"  Build kind         : {BUILD_KIND_NAMES.get(build[1], f'unknown ({build[1]})')}")
+                    print(f"  Build verification : {verification}")
+                    print()
+
+                    if product[2]:
+                        print(colored("  Security level     : CRITICAL - known security issues reported", color="red", attrs=["bold"]))
+                        exit_code = 1
+                    else:
+                        print(colored("  Security level     : OK - no known critical security issues", color="green"))
+
+                    att_state, att_color, att_detail = ATTESTATION_TEXT.get(
+                        build[2], ("invalid", "red", "Unexpected attestation value in contract.")
+                    )
+                    print(colored(f"  Rebuild validator  : {att_state.upper()}", color=att_color, attrs=["bold"]))
+                    print(f"                       {att_detail}")
+                    if build[2] == 4:
+                        exit_code = 1
+
+                    print()
+                    current_verification = contract.functions.current_product_build(product[0], build[1]).call()
+                    if verification == current_verification:
+                        print(colored("  Repository cache state matches the registered build in the contract.", color="green"))
+                    else:
+                        print(colored(f"  WARNING: Contract has a different current build registered: {current_verification}", color="red"))
+                        exit_code = 1
+    if args.aliases and not matched_aliases:
+        print(
+            colored(
+                f"ERROR: no enabled repository matching {args.aliases} found in {reposdir}",
+                color="red",
+            )
+        )
+        exit_code = 2
+    return exit_code
 
 if __name__ == "__main__":  # pragma: nocover
-    main()
+    exit(main())
 
 
