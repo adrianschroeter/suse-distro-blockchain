@@ -279,7 +279,7 @@ def do_counter(w3, c, args):
     print(c.functions.get_product_counter().call())
 
 
-def do_show(w3, c, args):
+def do_showid(w3, c, args):
     p = c.functions.get_product(args.product_id).call()
     print(f"id      : {args.product_id}")
     print(f"name    : {p[0]}")
@@ -294,10 +294,73 @@ def do_build(w3, c, args):
     print(f"attestation : {ATTESTATION_NAMES.get(b[2], b[2])}")
 
 
+BUILD_KIND_NAMES = {v: k for k, v in BUILD_KINDS.items()}
+
+ATTESTATION_TEXT = {
+    1: ("outstanding", "Build not yet verified by the official validator."),
+    2: ("approved", "Build reproducibility verified by the official validator."),
+    4: ("rejected", "Build reproducibility check REJECTED by the official validator."),
+}
+
+# Digest of the empty string, independent of the chosen hash algorithm - a
+# strong hint the git_ref is bogus/not a real commit.
+EMPTY_STRING_DIGESTS = {
+    "MD5": "d41d8cd98f00b204e9800998ecf8427e",
+    "SHA-1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+    "SHA-256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+}
+
+
+def _warn_source_commit(git_ref):
+    if len(git_ref) < 64:
+        print(
+            f"  WARNING: Source commit is only {len(git_ref)} hex chars, "
+            "shorter than a SHA-256 checksum (64)"
+        )
+    for algo, digest in EMPTY_STRING_DIGESTS.items():
+        if len(git_ref) == len(digest) and git_ref.lower() == digest:
+            print(f"  WARNING: Source commit equals the {algo} digest of the empty string")
+
+
 def do_current(w3, c, args):
-    kind = parse_kind(args.kind)
-    ver = c.functions.current_product_build(args.name, kind).call()
-    print(f"verification: {ver or '(none)'}")
+    if args.kind:
+        kinds = [parse_kind(args.kind)]
+    else:
+        kinds = sorted(BUILD_KINDS.values())
+
+    found = False
+    for kind in kinds:
+        ver = c.functions.current_product_build(args.name, kind).call()
+        if not ver:
+            continue
+        found = True
+
+        build = c.functions.get_product_build(ver).call()
+        product = c.functions.get_product(build[0]).call()
+
+        print()
+        print(f"Product name       : {product[0]}")
+        print(f"Source commit      : {product[1]}")
+        _warn_source_commit(product[1])
+        print(f"Build kind         : {BUILD_KIND_NAMES.get(build[1], f'unknown ({build[1]})')}")
+        print(f"Build verification : {ver}")
+        print()
+
+        if product[2]:
+            print("  Security level     : CRITICAL - known security issues reported")
+        else:
+            print("  Security level     : OK - no known critical security issues")
+
+        att_state, att_detail = ATTESTATION_TEXT.get(
+            build[2], ("invalid", "Unexpected attestation value in contract.")
+        )
+        print(f"  Rebuild validator  : {att_state.upper()}")
+        print(f"                       {att_detail}")
+        print()
+
+    if not found:
+        print(f"No current build registered for {args.name}")
+        sys.exit(2)
 
 
 # -- write commands -----------------------------------------------------------
@@ -412,9 +475,9 @@ def build_parser():
     s = sub.add_parser("counter")
     s.set_defaults(func=do_counter)
 
-    s = sub.add_parser("show")
+    s = sub.add_parser("showid")
     s.add_argument("product_id", type=int)
-    s.set_defaults(func=do_show)
+    s.set_defaults(func=do_showid)
 
     s = sub.add_parser("build")
     s.add_argument("verification")
@@ -422,7 +485,7 @@ def build_parser():
 
     s = sub.add_parser("current")
     s.add_argument("name")
-    s.add_argument("kind")
+    s.add_argument("kind", nargs="?", help="rpmmd|product|oci_container; default: all registered kinds")
     s.set_defaults(func=do_current)
     return p
 

@@ -23,7 +23,7 @@ next_product: public(uint256)
 # A product entry, each iteration is a new product.
 struct my_product :
     # short name including the branch
-    # For example "SLFO-1.1" for the managed code stream
+    # For example "Leap-16.1" for the managed code stream
     name: String[16]
     # defines the used source hash.
     # no git url here, just the hash

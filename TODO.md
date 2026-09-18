@@ -16,3 +16,10 @@ TODO (before production)
 
 * Support checking against via multiple RPC nodes.
 
+* We do _not_ register git URL's, only hashes for products.
+  This is on purpose so far, since a URL would point to a central service
+  again.
+   But we need a definition where to get it. Is it okay that it is
+  only part of the sbom?
+
+  

@@ -81,7 +81,7 @@ Registering has two steps: create the product, then attach a build to it.
 # 2a. create the product (product_creator role)
 export PRIVATE_KEY=0x...
 distro_tool --network hoodi --contract 0xADDRESS \
-    add-product SLFO-1.1 <git: 40-char sha1 or 64-char sha256>
+    add-product Leap-16.1 <git: 40-char sha1 or 64-char sha256>
 
 # 2b. attach a build to the product (product_creator role)
 distro_tool --network hoodi --contract 0xADDRESS \
@@ -101,7 +101,7 @@ Example, registering a build identified by its SHA-512 checksum:
 
 ```bash
 # full 128-hex-char sha512 digest of the build artifacts
-SHA512=$(sha512sum SLFO-1.1.iso | cut -d' ' -f1)   # -> 128 hex chars
+SHA512=$(sha512sum Leap-16.1.iso | cut -d' ' -f1)   # -> 128 hex chars
 distro_tool --network hoodi --contract 0xADDRESS \
     add-build <git_ref> rpmmd "$SHA512"
 ```
@@ -111,9 +111,16 @@ so a SHA-512 digest fits exactly. The product and build can be inspected
 read-only:
 
 ```bash
-distro_tool --network hoodi --contract 0xADDRESS show 1
-distro_tool --network hoodi --contract 0xADDRESS current SLFO-1.1 rpmmd
+distro_tool --network hoodi --contract 0xADDRESS showid 1
+distro_tool --network hoodi --contract 0xADDRESS current Leap-16.1
+distro_tool --network hoodi --contract 0xADDRESS current Leap-16.1 rpmmd
 ```
+
+`current` shows the current (latest) build state for a product: source commit,
+build kind, verification digest, security level and rebuild-validator
+attestation. A `KIND` is optional — `rpmmd`, `product` or `oci_container` —
+and filters to that build kind; without it, every registered build kind of
+the product is shown.
 
 ## 3. Approve or reject a product build attestation
 
@@ -161,7 +168,7 @@ distro_tool --network hoodi --contract 0xADDRESS \
 Inspect the flag:
 
 ```bash
-distro_tool --network hoodi --contract 0xADDRESS show 1
+distro_tool --network hoodi --contract 0xADDRESS showid 1
 # critical: True / False
 ```
 

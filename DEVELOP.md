@@ -82,7 +82,7 @@ distro_tool --network sepolia deploy \
 
 # register a product and its build (product_creator role)
 export PRIVATE_KEY=0x...
-distro_tool --network sepolia add-product SLFO-1.1 <git sha256>
+distro_tool --network sepolia add-product Leap-16.1 <git sha256>
 distro_tool --network sepolia add-build <git sha256> rpmmd <sha512>
 
 # validator / security roles
@@ -92,8 +92,9 @@ distro_tool set-critical 1 true
 
 # read-only
 distro_tool roles
-distro_tool show 1
-distro_tool current SLFO-1.1 rpmmd
+distro_tool showid 1
+distro_tool current Leap-16.1         # all build kinds
+distro_tool current Leap-16.1 rpmmd   # single build kind
 
 # local test network (no RPC needed)
 distro_tool --network tester deploy --builder ... --validator ... --security ...
