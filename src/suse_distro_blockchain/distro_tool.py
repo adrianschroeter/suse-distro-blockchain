@@ -11,7 +11,7 @@
 # Regenerate with:
 #   python3 ape/build_contract.py   (or: make contract-build)
 
-import argparse, configparser, hashlib, os, sys
+import argparse, configparser, hashlib, os, re, sys
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 from eth_account import Account
@@ -128,14 +128,37 @@ def validate_git_ref(r):
 
 MAX_VERIFICATION_LEN = 128  # fits sha512 (128 hex chars)
 
+# OCI image manifest digest, e.g. sha256:<64 hex>
+OCI_DIGEST_RE = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
+
 
 def validate_verification(v):
-    if not is_hex(v) or not (0 < len(v) <= MAX_VERIFICATION_LEN):
-        sys.exit(
-            f"verification must be 1-{MAX_VERIFICATION_LEN} hex chars "
-            "(sha512 = 128, sha256 = 64)."
-        )
-    return v
+    """Validate a verification key: bare hex or a ``sha256:<64 hex>`` digest."""
+    if OCI_DIGEST_RE.match(v):
+        return v.lower()
+    if is_hex(v) and 0 < len(v) <= MAX_VERIFICATION_LEN:
+        return v
+    sys.exit(
+        f"verification must be 1-{MAX_VERIFICATION_LEN} hex chars "
+        "(sha512 = 128, sha256 = 64) or a sha256:<64 hex> OCI digest."
+    )
+
+
+def validate_oci_verification(v):
+    """Canonicalize an ``oci_container`` verification to ``sha256:<64 hex>``.
+
+    Builds are keyed by the exact verification string on-chain, and
+    ``suse-distro-oci-check`` looks the image up as ``sha256:<digest>``. A bare
+    64 hex digest is accepted for convenience and gets the prefix added.
+    """
+    if OCI_DIGEST_RE.match(v):
+        return v.lower()
+    if is_hex(v) and len(v) == 64:
+        return "sha256:" + v.lower()
+    sys.exit(
+        "verification for oci_container must be a sha256 image digest "
+        "('sha256:<64 hex>', or a bare 64 hex digest)."
+    )
 
 
 _TESTER = None
@@ -391,7 +414,10 @@ def do_add_product(w3, c, args):
 def do_add_build(w3, c, args):
     git_ref = validate_git_ref(args.git_ref)
     kind = parse_kind(args.kind)
-    ver = validate_verification(args.verification)
+    if kind == BUILD_KINDS["oci_container"]:
+        ver = validate_oci_verification(args.verification)
+    else:
+        ver = validate_verification(args.verification)
     if not prompt(args, f"add_product_build(ref={git_ref}, kind={kind}, ver={ver})"):
         sys.exit("aborted")
     acct = get_signer(w3, args)
@@ -453,7 +479,11 @@ def build_parser():
     s = sub.add_parser("add-build")
     s.add_argument("git_ref")
     s.add_argument("kind", help="rpmmd|product|oci_container or 1|2|4")
-    s.add_argument("verification")
+    s.add_argument(
+        "verification",
+        help="build checksum (hex) or, for oci_container, the image manifest "
+             "digest sha256:<64 hex>",
+    )
     s.set_defaults(func=do_add_build)
 
     s = sub.add_parser("approve")

@@ -95,7 +95,7 @@ Arguments:
 | `name` | 1-16 characters |
 | `git_ref` | hex git commit, 40 (sha1) or 64 (sha256) chars, must match the contract's git_ref |
 | `kind` | `rpmmd` (1), `product` (2) or `oci_container` (4) |
-| `verification` | hex digest of the build artifacts, 1-128 chars. **SHA-512 is supported**: a sha512 digest is 128 hex chars (sha256 is 64). The same value references this build in every later attestation call. For `oci_container` this is the image manifest digest including the `sha256:` prefix (see section 6) |
+| `verification` | hex digest of the build artifacts, 1-128 chars. **SHA-512 is supported**: a sha512 digest is 128 hex chars (sha256 is 64). The same value references this build in every later attestation call. For `oci_container` this is the image manifest digest including the `sha256:` prefix (a bare 64-hex digest is auto-prefixed; see section 6) |
 
 Example, registering a build identified by its SHA-512 checksum:
 
