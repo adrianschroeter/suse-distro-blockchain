@@ -1,0 +1,16 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""zypp repoverification plugin entry point.
+
+The RPM installs this file as
+``/usr/lib/zypp/plugins/repoverification/suse-distro-check``. libzypp executes
+it for every repository during a metadata refresh; a non-zero exit status
+discards the repository.
+"""
+
+import sys
+
+from suse_distro_blockchain.repoverify import main
+
+if __name__ == "__main__":
+    sys.exit(main())

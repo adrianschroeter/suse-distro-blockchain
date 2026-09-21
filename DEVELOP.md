@@ -57,6 +57,10 @@ the artifact is missing, or the contract source changed since it was built,
 installed without the vyper source, the compiled artifact is authoritative and
 the check is skipped.
 
+The build pins vyper **0.4.3** (`ape/ape-config.yaml`). Event logging uses
+keyword arguments (`log SomeEvent(a=..., b=...)`), which is the required form
+from vyper 0.4.1 onward. Keep the pin and the build environment at >= 0.4.1.
+
 ### RPM / wheel packaging
 
 `pyproject.toml` uses setuptools with PEP 621 metadata and exposes two console
@@ -98,6 +102,54 @@ distro_tool current Leap-16.1 rpmmd   # single build kind
 
 # local test network (no RPC needed)
 distro_tool --network tester deploy --builder ... --validator ... --security ...
+```
+
+### zypp repoverification plugin
+
+`plugin/suse-distro-check` is the zypp **repoverification** plugin. libzypp runs
+every executable in `/usr/lib/zypp/plugins/repoverification` on each repository
+metadata refresh, immediately after `repodata/repomd.xml` has been downloaded
+and **before** GPG checks and solv conversion. A non-zero exit status makes
+libzypp discard that single repository, so the raw metadata update is blocked.
+
+The plugin is stateless and is called for *every* repository (it receives the
+alias via `--ralias`), therefore it is opt-in by policy: only aliases that have
+a `[repo:<alias>]` section in `/etc/suse-distro-check.conf` are enforced. All
+other repositories follow the `unmanaged` setting (default: `allow`).
+
+The protocol front end is `src/suse_distro_blockchain/repoverify.py`; the checks
+are shared with the command line tool in
+`src/suse_distro_blockchain/metadata.py`. The `suse-distro-check` console script
+and the plugin therefore always agree.
+
+The plugin is **not** part of the wheel (console scripts cannot target the zypp
+plugin directory); the rpm spec must install it:
+
+```spec
+Requires: python3-web3
+Requires: python3-iniparse
+Requires: python3-termcolor
+# no zypp-plugin-python needed for repoverification
+
+%install
+install -D -m 0755 plugin/suse-distro-check \
+    %{buildroot}%{_prefix}/lib/zypp/plugins/repoverification/suse-distro-check
+```
+
+Make sure the rpm ships `/etc/suse-distro-check.conf` (the plugin reads the
+`[defaults]` / `[repo:<alias>]` policy from there) and does **not** install an
+older *sigcheck* plugin at `/usr/lib/zypp/plugins/sigcheck/suse-distro-check`;
+that variant is unused now and would fail with a protocol error.
+
+Test it directly, no zypper refresh required:
+
+```bash
+SUSE_DISTRO_CHECK_CONF=./suse-distro-check.conf \
+  python3 plugin/suse-distro-check \
+    --ralias repo-oss \
+    --file /var/cache/zypp/raw/repo-oss/repodata/repomd.xml \
+    --fsig /var/cache/zypp/raw/repo-oss/repodata/repomd.xml.asc
+echo $?   # 0 = allow, 1 = discard the repository
 ```
 
 ## Ape based development

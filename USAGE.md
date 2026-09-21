@@ -15,7 +15,7 @@ from `suse-distro-check.conf`.
 # 1. environment (web3, eth-account; + eth-tester for --network tester)
 pipx install web3 eth-account
 
-# 2. generate the build artifact (needs vyper 0.4.x)
+# 2. generate the build artifact (needs vyper 0.4.3)
 make contract-build
 
 # 3. (defaults) network presets are read from suse-distro-check.conf:
@@ -171,6 +171,67 @@ Inspect the flag:
 distro_tool --network hoodi --contract 0xADDRESS showid 1
 # critical: True / False
 ```
+
+## 5. Verify a repository (suse-distro-check + repoverification plugin)
+
+Two front ends share the same checks and the same `/etc/suse-distro-check.conf`:
+
+* the `suse-distro-check` command line tool reports the state of the already
+  cached repositories below `/var/cache/zypp/raw`;
+* the zypp **repoverification** plugin runs during a `zypper refresh`, right
+  after `repodata/repomd.xml` is downloaded and before GPG checks and solv
+  conversion. A failing check discards that one repository (exit non-zero).
+
+Command line:
+
+```bash
+suse-distro-check                 # all rpm-md repos with cached metadata
+suse-distro-check repo-oss repo-update
+suse-distro-check -v              # also show successful checks
+```
+
+For each repository the primary metadata checksum (`repodata/<checksum>-primary.xml.*`)
+is looked up on-chain via `get_product_build`, and the following is reported:
+
+| check | meaning |
+| --- | --- |
+| `registered` | the digest is registered in the contract |
+| `product` | product name / git_ref / build kind |
+| `kind` | on-chain build kind is `rpmmd` |
+| `critical_issues` | `known_critical_issues` flag set by the security team |
+| `attestation` | reproducibility: `outstanding` / `approved` / `rejected` |
+| `current_build` | this digest is the current build for the product |
+| `signed` | metadata has a detached GPG signature |
+
+### Per-repository policy
+
+The plugin is called for every repository, so it only enforces aliases that
+have a `[repo:<alias>]` section in `suse-distro-check.conf`. Everything else
+follows `[defaults] unmanaged` (default `allow`, so unrelated repos are never
+blocked):
+
+```ini
+[defaults]
+unmanaged = allow
+registered = reject
+critical_issues = reject
+rpc_error = reject
+current_build = warn
+kind = warn
+signed = warn
+min_attestation = outstanding
+
+[repo:repo-oss]
+network = hoodi
+current_build = reject
+```
+
+Each of `registered`, `critical_issues`, `rpc_error`, `current_build`, `kind`
+and `signed` takes `reject` (discard the repository), `warn` (keep it and print
+a warning) or `ignore` (skip the check). `min_attestation` is `off`,
+`outstanding` or `approved`; a rejected attestation always fails. `network`
+selects the section (provider, chain id, contract) for that repository; without
+it the `[main] network` section is used.
 
 ## Testing locally (no RPC, no funds)
 
