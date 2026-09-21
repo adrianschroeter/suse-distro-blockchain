@@ -167,7 +167,7 @@ or the rest of `PATH`) with the reference rewritten to
 `image@sha256:<verified digest>`.
 
 The logic lives in `src/suse_distro_blockchain/spodman_shim.py` and is unit
-tested in `test_spodman_shim.py`. `suse-distro-oci-check` requires `skopeo`
+tested in `tests/test_spodman_shim.py`. `suse-distro-oci-check` requires `skopeo`
 (`Requires: skopeo`) to resolve a tag to its manifest digest. Images are
 matched with `[oci:<registry/repo>]` sections; unmatched scopes follow
 `unmanaged` (default `allow`).
@@ -184,7 +184,7 @@ ln -s %{_prefix}/lib/suse-distro-blockchain/podman \
 
 ## Ape based development
 
-End-to-end tests of the contract live in `test_distro_contract.py` (boa based).
+End-to-end tests of the contract live in `tests/test_distro_contract.py` (boa based).
 
 ```bash
 python3 -m venv ./myv
@@ -226,5 +226,13 @@ On modifications of the contract run:
 ```bash
 # on abi changes:
 vyper -f abi contracts/distro.vy  > .build/distro.json
-python3 test_distro_contract.py
+python3 tests/test_distro_contract.py
+```
+
+## Running the unit tests
+
+All unit tests live in `tests/` and import the package from `src/`:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests -t .
 ```

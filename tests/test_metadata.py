@@ -27,6 +27,10 @@ REPOMD = """<?xml version="1.0" encoding="UTF-8"?>
 VERIFICATION = "abc123"
 GIT_REF = "8a645f5782b507202c75ee7fbeaf7bb21d34dd5c2eda4118bb76a31a39226e30"
 
+# the packaged config lives in the repository root, one level above tests/
+SHIPPED_CONF = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            os.pardir, "suse-distro-check.conf")
+
 
 class FakeFunction:
     def __init__(self, value):
@@ -148,7 +152,7 @@ class ShippedConfTest(unittest.TestCase):
     """The packaged config must parse without issues and carry sane defaults."""
 
     def test_shipped_defaults_are_valid(self):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "suse-distro-check.conf")
+        path = SHIPPED_CONF
         conf = metadata.load_conf(path)
         policy = metadata.resolve_policy(conf, "")
         self.assertEqual(policy.issues, [])
@@ -161,7 +165,7 @@ class ShippedConfTest(unittest.TestCase):
         self.assertEqual(policy.values["min_attestation"], "outstanding")
 
     def test_shipped_conf_has_valid_oci_defaults(self):
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "suse-distro-check.conf")
+        path = SHIPPED_CONF
         conf = metadata.load_conf(path)
         policy = metadata.resolve_oci_policy(conf, "registry.example/opensuse/leap")
         self.assertFalse(policy.managed)  # only commented examples ship
