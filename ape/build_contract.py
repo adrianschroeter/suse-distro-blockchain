@@ -76,7 +76,7 @@ def compile_with_vyper_cli(source_path):
     except FileNotFoundError:
         sys.exit(
             "vyper is required to build the distro_contract.py artifact.\n"
-            "  Install vyper 0.4.x (e.g. pip install vyper==0.4.0) or invoke via\n"
+            "  Install vyper 0.4.x (e.g. pip install vyper==0.4.3) or invoke via\n"
             "  a python that has vyper available, e.g.:\n"
             "    make contract-build PYTHON=/path/to/venv/bin/python"
         )

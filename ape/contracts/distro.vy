@@ -1,4 +1,4 @@
-# @version ^0.4.0
+# @version ^0.4.3
 
 # SHA-512 ready string for build verification
 #type BuildVerificationType = Bytes[128]

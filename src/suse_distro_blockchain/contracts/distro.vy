@@ -1,4 +1,4 @@
-# @version ^0.4.0
+# @version ^0.4.3
 
 # SHA-512 ready string for build verification
 #type BuildVerificationType = Bytes[128]
@@ -60,6 +60,37 @@ product_builds: HashMap[String[128], my_product_build]
 
 current_verification: HashMap[String[25], String[128]]
 
+#
+# Events
+#
+# Everything below can already be read with the get_* views, so these exist for
+# watchers rather than for the contract itself: without them a monitor has to
+# poll every verification hash it knows about, because builds are not
+# enumerable on chain and there is no other way to notice a change.
+#
+# verification is deliberately not indexed. Indexing a string puts only its
+# keccak hash in the topic, and readers want the digest itself, which is the
+# key the rest of the toolchain joins on.
+
+event ProductAdded:
+    product_id: indexed(uint256)
+    name: String[16]
+    git_ref: String[64]
+
+event BuildRegistered:
+    product_id: indexed(uint256)
+    kind: indexed(uint8)
+    verification: String[128]
+
+event AttestationChanged:
+    product_id: indexed(uint256)
+    attestation: Attestation
+    verification: String[128]
+
+event CriticalFlagChanged:
+    product_id: indexed(uint256)
+    critical: bool
+
 # build the current_verification key from a product name and a kind.
 # The kind is encoded as exactly 3 digits, so different
 # (name, kind) pairs can never collide in the concatenated key.
@@ -118,6 +149,7 @@ def add_product(name: String[16], git_ref: String[64]) -> uint256:
     self.products[current_product].known_critical_issues = False
     self.git_ref_index[git_ref] = current_product
     self.next_product += 1
+    log ProductAdded(product_id=current_product, name=name, git_ref=git_ref)
     return current_product
 
 @external
@@ -140,6 +172,8 @@ def add_product_build(git_ref: String[64], kind: uint8, verification: String[128
     self.product_builds[verification].kind = kind
     self.product_builds[verification].attestation = Attestation.outstanding
 
+    log BuildRegistered(product_id=product_id, kind=kind, verification=verification)
+
 #
 # Modify registered products
 #
@@ -153,6 +187,7 @@ def set_critical(product_id: uint256, critical: bool):
     assert product_id > 0
     assert product_id < self.next_product
     self.products[product_id].known_critical_issues = critical
+    log CriticalFlagChanged(product_id=product_id, critical=critical)
 
 
 @external
@@ -164,6 +199,9 @@ def approve_attestation(verification: String[128]):
     # only registered builds can be attested
     assert self.product_builds[verification].product_id != 0
     self.product_builds[verification].attestation = Attestation.approved
+    log AttestationChanged(product_id=self.product_builds[verification].product_id,
+                           attestation=Attestation.approved,
+                           verification=verification)
 
 @external
 def reject_attestation(verification: String[128]):
@@ -174,6 +212,9 @@ def reject_attestation(verification: String[128]):
     # only registered builds can be attested
     assert self.product_builds[verification].product_id != 0
     self.product_builds[verification].attestation = Attestation.rejected
+    log AttestationChanged(product_id=self.product_builds[verification].product_id,
+                           attestation=Attestation.rejected,
+                           verification=verification)
 
 #
 # Read-Only operations for everybody
