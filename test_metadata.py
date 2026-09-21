@@ -162,14 +162,14 @@ class VerifyBuildTest(unittest.TestCase):
     def test_approved_registered_build_passes(self):
         results = metadata.verify_build(VERIFICATION, registered_contract(), make_policy())
         self.assertEqual(metadata.worst(results), metadata.OK)
-        self.assertEqual(level_of(results, "registered"), metadata.OK)
-        self.assertEqual(level_of(results, "attestation"), metadata.OK)
+        self.assertEqual(level_of(results, "registration"), metadata.OK)
+        self.assertEqual(level_of(results, "verification"), metadata.OK)
 
     def test_unregistered_is_reject_by_default(self):
         contract = FakeContract(build=(0, 0, 0))
         results = metadata.verify_build(VERIFICATION, contract, make_policy())
         self.assertEqual(metadata.worst(results), metadata.REJECT)
-        self.assertEqual(level_of(results, "registered"), metadata.REJECT)
+        self.assertEqual(level_of(results, "registration"), metadata.REJECT)
 
     def test_critical_issues_are_reject_by_default(self):
         contract = registered_contract(critical=True)
@@ -179,17 +179,17 @@ class VerifyBuildTest(unittest.TestCase):
     def test_rejected_attestation_always_fails(self):
         contract = registered_contract(attestation=metadata.ATTESTATION_REJECTED)
         results = metadata.verify_build(VERIFICATION, contract, make_policy())
-        self.assertEqual(level_of(results, "attestation"), metadata.REJECT)
+        self.assertEqual(level_of(results, "verification"), metadata.REJECT)
 
     def test_outstanding_below_minimum_is_warn(self):
         contract = registered_contract(attestation=metadata.ATTESTATION_OUTSTANDING)
         results = metadata.verify_build(VERIFICATION, contract, make_policy(min_attestation="approved"))
-        self.assertEqual(level_of(results, "attestation"), metadata.WARN)
+        self.assertEqual(level_of(results, "verification"), metadata.WARN)
 
     def test_outstanding_accepted_by_default(self):
         contract = registered_contract(attestation=metadata.ATTESTATION_OUTSTANDING)
         results = metadata.verify_build(VERIFICATION, contract, make_policy())
-        self.assertEqual(level_of(results, "attestation"), metadata.OK)
+        self.assertEqual(level_of(results, "verification"), metadata.OK)
 
     def test_current_mismatch_is_warn_by_default_and_configurable(self):
         contract = registered_contract(current="other")

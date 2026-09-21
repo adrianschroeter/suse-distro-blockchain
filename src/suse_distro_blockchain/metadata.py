@@ -303,13 +303,13 @@ def verify_build(verification, contract, policy, fsig_path=None):
     if product_id == 0:
         results.append(
             Result(
-                "registered",
+                "registration",
                 policy.level("registered"),
                 f"build {verification} is not registered on-chain",
             )
         )
         return results
-    results.append(Result("registered", OK, f"build is registered as product #{product_id}"))
+    results.append(Result("registration", OK, f"build is registered as product #{product_id}"))
 
     product = contract.functions.get_product(product_id).call()
     name, git_ref, critical = product[0], product[1], product[2]
@@ -368,19 +368,19 @@ def verify_build(verification, contract, policy, fsig_path=None):
         att_name = ATTESTATION_NAMES.get(attestation, str(attestation))
         if attestation == ATTESTATION_REJECTED:
             results.append(
-                Result("attestation", REJECT, "reproducibility attestation is rejected")
+                Result("verification", REJECT, "reproducibility verification is rejected")
             )
         elif attestation < minimum:
             results.append(
                 Result(
-                    "attestation",
+                    "verification",
                     WARN,
-                    f"reproducibility attestation is {att_name}, required {min_attestation}",
+                    f"reproducibility verification is {att_name}, required {min_attestation}",
                 )
             )
         else:
             results.append(
-                Result("attestation", OK, f"reproducibility attestation is {att_name}")
+                Result("verification", OK, f"reproducibility verification is {att_name}")
             )
 
     if policy.level("current_build") != "ignore":

@@ -195,11 +195,11 @@ is looked up on-chain via `get_product_build`, and the following is reported:
 
 | check | meaning |
 | --- | --- |
-| `registered` | the digest is registered in the contract |
+| `registration` | the digest is registered in the contract (config key `registered`) |
 | `product` | product name / git_ref / build kind |
 | `kind` | on-chain build kind is `rpmmd` |
 | `critical_issues` | `known_critical_issues` flag set by the security team |
-| `attestation` | reproducibility: `outstanding` / `approved` / `rejected` |
+| `verification` | rebuild reproducibility: `outstanding` / `approved` / `rejected` (config key `min_attestation`) |
 | `current_build` | this digest is the current build for the product |
 
 ### Per-repository policy
