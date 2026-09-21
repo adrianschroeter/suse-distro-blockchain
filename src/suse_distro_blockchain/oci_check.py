@@ -18,8 +18,6 @@ See also ``suse_distro_blockchain.metadata`` for the shared check logic.
 import argparse
 import sys
 
-from termcolor import colored
-
 try:
     from . import metadata
     from .metadata import OK, REJECT
@@ -53,8 +51,9 @@ def build_parser():
 def emit(result, verbose=True, stream=None):
     if not verbose and result.level == OK:
         return
-    print(colored(f"[{metadata.TAG[result.level]}] {result.name}: {result.message}",
-                  metadata.COLORS[result.level]), file=stream or sys.stdout)
+    stream = stream or sys.stdout
+    line = f"[{metadata.TAG[result.level]}] {result.name}: {result.message}"
+    print(metadata.colorize(line, metadata.COLORS[result.level], stream), file=stream)
 
 
 def main(argv=None):
@@ -77,7 +76,8 @@ def main(argv=None):
     diag = sys.stderr if args.print_ref else sys.stdout
 
     for issue in policy.issues:
-        print(colored(f"[warn] config: {issue}", "yellow"), file=sys.stderr)
+        print(metadata.colorize(f"[warn] config: {issue}", "yellow", sys.stderr),
+              file=sys.stderr)
 
     if args.verbose:
         section = metadata.oci_section(scope)
@@ -104,7 +104,7 @@ def main(argv=None):
             contract_override=args.contract,
         )
     except Exception as exc:  # fail closed on the unexpected
-        print(colored(f"[ERROR] internal: {exc}", "red"), file=diag)
+        print(metadata.colorize(f"[ERROR] internal: {exc}", "red", diag), file=diag)
         return 1
 
     for result in results:

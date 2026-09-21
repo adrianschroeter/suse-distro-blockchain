@@ -17,7 +17,6 @@ import re
 import sys
 
 from iniparse import INIConfig
-from termcolor import colored
 
 try:
     from . import metadata
@@ -117,14 +116,14 @@ def main(argv=None):
     try:
         w3 = metadata.connect_provider(net.get("http_provider"), net.get("chainid"), args.timeout)
     except Exception as exc:
-        print(colored(f"ERROR: {exc}", "red"))
+        print(metadata.colorize(f"ERROR: {exc}", "red", sys.stdout))
         return 1
 
     print(f"Used chain ID: {w3.eth.chain_id}, @block: {w3.eth.block_number}, contract: {contract_addr}")
     try:
         contract = metadata.contract_at(w3, contract_addr)
     except Exception as exc:
-        print(colored(f"ERROR: {exc}", "red"))
+        print(metadata.colorize(f"ERROR: {exc}", "red", sys.stdout))
         return 1
 
     overall = OK
@@ -143,7 +142,8 @@ def main(argv=None):
         try:
             _checksum_type, verification = metadata.read_primary_checksum(rpmmd)
         except Exception as exc:
-            print(colored(f"[ERROR] metadata: cannot read primary checksum: {exc}", "red"))
+            print(metadata.colorize(f"[ERROR] metadata: cannot read primary checksum: {exc}",
+                                    "red", sys.stdout))
             overall = REJECT
             continue
 
@@ -152,16 +152,17 @@ def main(argv=None):
         for result in results:
             if not args.verbose and result.level == OK:
                 continue
-            print(colored(str(result), metadata.COLORS[result.level]))
+            print(metadata.colorize(str(result), metadata.COLORS[result.level], sys.stdout))
             if metadata.LEVEL_ORDER[result.level] > metadata.LEVEL_ORDER[overall]:
                 overall = result.level
         checked += 1
 
     if args.aliases and not matched:
         print(
-            colored(
+            metadata.colorize(
                 f"ERROR: no enabled repository matching {args.aliases} found in /etc/zypp/repos.d",
                 "red",
+                sys.stdout,
             )
         )
         return 2

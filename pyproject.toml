@@ -25,7 +25,6 @@ dependencies = [
     "web3>=7.5.0,<8",
     "eth-account",
     "iniparse",
-    "termcolor",
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",

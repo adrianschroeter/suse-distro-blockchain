@@ -24,6 +24,11 @@ import shutil
 import subprocess
 import sys
 
+try:
+    from . import metadata
+except ImportError:  # pragma: nocover - direct execution from a source checkout
+    import metadata
+
 # exit code used by suse-distro-oci-check when the scope has no policy
 UNMANAGED = 3
 
@@ -188,19 +193,14 @@ def _verifier_command(ref):
 
 def verify_reference(ref):
     """Return ``(exit_code, pinned_reference_or_None)`` for ``ref``."""
-    proc = subprocess.run(_verifier_command(ref), stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, text=True)
-    # Diagnostics (including warnings for accepted images) go to stderr; with
-    # --print-ref stdout carries only the pinned reference.
-    if proc.stderr.strip():
-        sys.stderr.write(proc.stderr)
-        if not proc.stderr.endswith("\n"):
-            sys.stderr.write("\n")
+    # Diagnostics (including warnings for accepted images) go to stderr, so
+    # stderr is inherited: the verifier writes straight to the terminal and can
+    # colorize its output based on the real destination. With --print-ref
+    # stdout carries only the pinned reference.
+    proc = subprocess.run(_verifier_command(ref), stdout=subprocess.PIPE, text=True)
     if proc.returncode != 0:
-        if proc.stdout.strip():
-            sys.stderr.write(proc.stdout)
         return proc.returncode, None
-    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    lines = [line for line in (proc.stdout or "").splitlines() if line.strip()]
     return 0, (lines[-1].strip() if lines else None)
 
 
@@ -241,8 +241,8 @@ def main(argv=None):
     if code == UNMANAGED:
         os.execv(real, [real] + argv)
     if code != 0 or not pinned:
-        sys.stderr.write(f"spodman: image {ref!r} was rejected by "
-                         "suse-distro-oci-check\n")
+        message = f"spodman: image {ref!r} was rejected by suse-distro-oci-check"
+        sys.stderr.write(metadata.colorize(message, "red", sys.stderr) + "\n")
         return code or 1
 
     rest[image_index] = pinned

@@ -229,7 +229,8 @@ and `signed` takes `reject` (discard the repository), `warn` (keep it and print
 a warning) or `ignore` (skip the check). The GPG check is `ignore` by default
 because the on-chain verification does not depend on the package signature; set
 it to `warn` or `reject` to enforce signing as well. `min_attestation` is `off`,
-`outstanding` or `approved`; a rejected attestation always fails. `network`
+`outstanding` or `approved`; a rejected attestation fails unless the check is
+disabled with `off`, in which case it is reported as a warning. `network`
 selects the section (provider, chain id, contract) for that repository; without
 it the `[main] network` section is used.
 

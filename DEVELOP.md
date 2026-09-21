@@ -132,7 +132,6 @@ plugin directory); the rpm spec must install it:
 ```spec
 Requires: python3-web3
 Requires: python3-iniparse
-Requires: python3-termcolor
 # no zypp-plugin-python needed for repoverification
 
 %install

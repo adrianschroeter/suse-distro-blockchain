@@ -14,6 +14,7 @@ import hashlib
 import os
 import re
 import subprocess
+import sys
 from xml.dom import Node
 from xml.dom.minidom import parse
 
@@ -85,6 +86,38 @@ TAG = {OK: "OK", WARN: "warn", REJECT: "ERROR"}
 # terminal colors used by the reporting front ends
 COLORS = {OK: "green", WARN: "yellow", REJECT: "red"}
 
+_ANSI_COLORS = {"red": "31", "green": "32", "yellow": "33"}
+
+
+def color_enabled(stream=None):
+    """Return whether ANSI colors should be used for ``stream``.
+
+    Honors ``NO_COLOR``/``ANSI_COLORS_DISABLED`` (disable) and ``FORCE_COLOR``
+    (enable); otherwise colors are only used when the destination stream is a
+    terminal. Unlike ``termcolor`` this checks the stream actually written to,
+    so warnings sent to a terminal stderr stay colored even when stdout is a
+    pipe (and vice versa).
+    """
+    if os.environ.get("ANSI_COLORS_DISABLED") or os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    if os.environ.get("TERM") == "dumb":
+        return False
+    stream = stream if stream is not None else sys.stdout
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError):
+        return False
+
+
+def colorize(text, color, stream=None):
+    """Wrap ``text`` in ANSI ``color`` when ``stream`` is a terminal."""
+    code = _ANSI_COLORS.get(color)
+    if not code or not color_enabled(stream):
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
 # Level applied to a check that fails. ``ignore`` disables the check.
 _LEVEL_KEYS = ("registered", "critical_issues", "rpc_error", "current_build", "kind", "signed")
 _UNMANAGED_LEVELS = ("allow", "warn", "reject")
@@ -101,8 +134,9 @@ DEFAULT_POLICY = {
     "kind": WARN,
     # GPG signing is optional; the on-chain verification is independent of it.
     "signed": "ignore",
-    # minimum accepted reproducibility attestation (outstanding is accepted,
-    # rejected always fails):
+    # minimum accepted reproducibility attestation (outstanding is accepted;
+    # rejected fails unless the check is disabled with "off", in which case it
+    # is downgraded to a warning):
     "min_attestation": "outstanding",
     # optional per repo network override (section name in the config file):
     "network": "",
@@ -476,17 +510,20 @@ def verify_build(verification, contract, policy, fsig_path=None,
             results.append(Result("critical_issues", OK, "no known critical security issues"))
 
     min_attestation = policy.values["min_attestation"]
-    if min_attestation != "off":
+    att_name = ATTESTATION_NAMES.get(attestation, str(attestation))
+    if attestation == ATTESTATION_REJECTED:
+        # A rejected build is never acceptable, but with min_attestation=off the
+        # attestation check is disabled, so report it as a warning only.
+        level = WARN if min_attestation == "off" else REJECT
+        results.append(
+            Result("verification", level, "reproducibility verification is rejected")
+        )
+    elif min_attestation != "off":
         minimum = {
             "outstanding": ATTESTATION_OUTSTANDING,
             "approved": ATTESTATION_APPROVED,
         }[min_attestation]
-        att_name = ATTESTATION_NAMES.get(attestation, str(attestation))
-        if attestation == ATTESTATION_REJECTED:
-            results.append(
-                Result("verification", REJECT, "reproducibility verification is rejected")
-            )
-        elif attestation < minimum:
+        if attestation < minimum:
             results.append(
                 Result(
                     "verification",

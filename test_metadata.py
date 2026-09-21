@@ -187,10 +187,16 @@ class VerifyBuildTest(unittest.TestCase):
         results = metadata.verify_build(VERIFICATION, contract, make_policy())
         self.assertEqual(level_of(results, "critical_issues"), metadata.REJECT)
 
-    def test_rejected_attestation_always_fails(self):
+    def test_rejected_attestation_fails_by_default(self):
         contract = registered_contract(attestation=metadata.ATTESTATION_REJECTED)
         results = metadata.verify_build(VERIFICATION, contract, make_policy())
         self.assertEqual(level_of(results, "verification"), metadata.REJECT)
+
+    def test_rejected_attestation_warns_when_check_is_off(self):
+        contract = registered_contract(attestation=metadata.ATTESTATION_REJECTED)
+        results = metadata.verify_build(VERIFICATION, contract, make_policy(min_attestation="off"))
+        self.assertEqual(level_of(results, "verification"), metadata.WARN)
+        self.assertEqual(metadata.worst(results), metadata.WARN)
 
     def test_outstanding_below_minimum_is_warn(self):
         contract = registered_contract(attestation=metadata.ATTESTATION_OUTSTANDING)

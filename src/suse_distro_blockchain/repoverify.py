@@ -27,13 +27,6 @@ except ImportError:  # pragma: nocover - direct execution as a plugin
     import metadata
     from metadata import OK, REJECT
 
-try:
-    from termcolor import colored
-except ImportError:  # pragma: nocover - keep the plugin usable without colors
-    def colored(text, *_args, **_kwargs):
-        return text
-
-
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="suse-distro-check",
@@ -57,8 +50,8 @@ def build_parser():
 def emit(result, verbose=True):
     if not verbose and result.level == OK:
         return
-    print(colored(f"[{metadata.TAG[result.level]}] {result.name}: {result.message}",
-                  metadata.COLORS[result.level]))
+    line = f"[{metadata.TAG[result.level]}] {result.name}: {result.message}"
+    print(metadata.colorize(line, metadata.COLORS[result.level], sys.stdout))
 
 
 def main(argv=None):
@@ -87,7 +80,7 @@ def main(argv=None):
         policy.values["network"] = args.network
 
     for issue in policy.issues:
-        print(colored(f"[warn] config: {issue}", "yellow"))
+        print(metadata.colorize(f"[warn] config: {issue}", "yellow", sys.stdout))
 
     if args.verbose:
         section = metadata.repo_section(alias)
@@ -117,7 +110,7 @@ def main(argv=None):
             contract_override=args.contract,
         )
     except Exception as exc:  # fail closed on the unexpected
-        print(colored(f"[ERROR] internal: {exc}", "red"))
+        print(metadata.colorize(f"[ERROR] internal: {exc}", "red", sys.stdout))
         return 1
 
     for result in results:
