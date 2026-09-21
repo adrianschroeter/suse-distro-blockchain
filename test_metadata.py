@@ -141,6 +141,23 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(net["http_provider"], "http://localhost:8545")
 
 
+class ShippedConfTest(unittest.TestCase):
+    """The packaged config must parse without issues and carry sane defaults."""
+
+    def test_shipped_defaults_are_valid(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "suse-distro-check.conf")
+        conf = metadata.load_conf(path)
+        policy = metadata.resolve_policy(conf, "")
+        self.assertEqual(policy.issues, [])
+        self.assertEqual(policy.level("unmanaged"), "allow")
+        self.assertEqual(policy.level("registered"), metadata.REJECT)
+        self.assertEqual(policy.level("critical_issues"), metadata.REJECT)
+        self.assertEqual(policy.level("rpc_error"), metadata.REJECT)
+        self.assertEqual(policy.level("current_build"), metadata.WARN)
+        self.assertEqual(policy.level("signed"), "ignore")
+        self.assertEqual(policy.values["min_attestation"], "outstanding")
+
+
 class VerifyBuildTest(unittest.TestCase):
     def test_approved_registered_build_passes(self):
         results = metadata.verify_build(VERIFICATION, registered_contract(), make_policy())

@@ -201,7 +201,6 @@ is looked up on-chain via `get_product_build`, and the following is reported:
 | `critical_issues` | `known_critical_issues` flag set by the security team |
 | `attestation` | reproducibility: `outstanding` / `approved` / `rejected` |
 | `current_build` | this digest is the current build for the product |
-| `signed` | metadata has a detached GPG signature |
 
 ### Per-repository policy
 
@@ -218,7 +217,6 @@ critical_issues = reject
 rpc_error = reject
 current_build = warn
 kind = warn
-signed = warn
 min_attestation = outstanding
 
 [repo:repo-oss]
@@ -228,7 +226,9 @@ current_build = reject
 
 Each of `registered`, `critical_issues`, `rpc_error`, `current_build`, `kind`
 and `signed` takes `reject` (discard the repository), `warn` (keep it and print
-a warning) or `ignore` (skip the check). `min_attestation` is `off`,
+a warning) or `ignore` (skip the check). The GPG check is `ignore` by default
+because the on-chain verification does not depend on the package signature; set
+it to `warn` or `reject` to enforce signing as well. `min_attestation` is `off`,
 `outstanding` or `approved`; a rejected attestation always fails. `network`
 selects the section (provider, chain id, contract) for that repository; without
 it the `[main] network` section is used.

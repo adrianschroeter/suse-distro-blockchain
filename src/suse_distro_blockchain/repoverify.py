@@ -67,6 +67,14 @@ def main(argv=None):
         print(f"suse-distro-check: ignoring unknown arguments: {' '.join(unknown)}", file=sys.stderr)
     alias = args.ralias or ""
 
+    if not args.ralias and not args.file:
+        print(
+            "suse-distro-check: no repository context given (--ralias/--file); "
+            "this plugin is normally invoked by libzypp during a refresh.",
+            file=sys.stderr,
+        )
+        return 0
+
     conf_path = args.conf or metadata.default_conf_path()
     try:
         conf = metadata.load_conf(conf_path)
@@ -80,6 +88,15 @@ def main(argv=None):
 
     for issue in policy.issues:
         print(colored(f"[warn] config: {issue}", "yellow"))
+
+    if args.verbose:
+        section = metadata.repo_section(alias)
+        print(
+            f"# conf={conf_path} alias={alias!r} managed={policy.managed} "
+            f"section={section if policy.managed else '(none)'} "
+            f"registered={policy.level('registered')} unmanaged={policy.level('unmanaged')}",
+            file=sys.stderr,
+        )
 
     if not policy.managed:
         result = metadata.unmanaged_result(policy)

@@ -91,7 +91,8 @@ DEFAULT_POLICY = {
     "rpc_error": REJECT,
     "current_build": WARN,
     "kind": WARN,
-    "signed": WARN,
+    # GPG signing is optional; the on-chain verification is independent of it.
+    "signed": "ignore",
     # minimum accepted reproducibility attestation (outstanding is accepted,
     # rejected always fails):
     "min_attestation": "outstanding",
