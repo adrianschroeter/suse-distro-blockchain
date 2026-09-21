@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for the shared repository metadata verification."""
 
+import hashlib
+import io
 import os
 import tempfile
 import unittest
 from unittest import mock
 
 from suse_distro_blockchain import metadata
+from suse_distro_blockchain import oci_check
 from suse_distro_blockchain import repoverify
 
 
@@ -157,6 +160,14 @@ class ShippedConfTest(unittest.TestCase):
         self.assertEqual(policy.level("signed"), "ignore")
         self.assertEqual(policy.values["min_attestation"], "outstanding")
 
+    def test_shipped_conf_has_valid_oci_defaults(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "suse-distro-check.conf")
+        conf = metadata.load_conf(path)
+        policy = metadata.resolve_oci_policy(conf, "registry.example/opensuse/leap")
+        self.assertFalse(policy.managed)  # only commented examples ship
+        self.assertEqual(policy.issues, [])
+        self.assertEqual(policy.level("unmanaged"), "allow")
+
 
 class VerifyBuildTest(unittest.TestCase):
     def test_approved_registered_build_passes(self):
@@ -281,6 +292,165 @@ class RepoverifyMainTest(unittest.TestCase):
         conf = self._conf("[defaults]\n[repo:repo-oss]\nnetwork=hoodi\n")
         rc = repoverify.main(["--ralias", "repo-oss", "--file", "/nonexistent/repomd.xml", "--conf", conf])
         self.assertEqual(rc, 0)
+
+
+class OciReferenceTest(unittest.TestCase):
+    def test_scope_strips_tag_digest_and_transport(self):
+        digest = "sha256:" + "0" * 64
+        self.assertEqual(metadata.oci_scope("docker://registry.example/ns/img:1.0"),
+                         "registry.example/ns/img")
+        self.assertEqual(metadata.oci_scope(f"registry.example/ns/img@{digest}"),
+                         "registry.example/ns/img")
+        self.assertEqual(metadata.oci_scope("localhost:5000/ns/img"), "localhost:5000/ns/img")
+        self.assertEqual(metadata.oci_scope("localhost:5000/ns/img:tag"), "localhost:5000/ns/img")
+        self.assertEqual(metadata.oci_scope("alpine"), "alpine")
+
+    def test_resolve_embedded_digest_is_returned_unchanged(self):
+        digest = "sha256:" + "a" * 64
+        ref, resolved = metadata.resolve_oci_digest(f"registry.example/img@{digest}")
+        self.assertEqual(resolved, digest)
+        self.assertEqual(ref, "registry.example/img")
+
+    def test_resolve_hashes_raw_manifest(self):
+        raw = b'{"schemaVersion":2}'
+        ref, digest = metadata.resolve_oci_digest("registry.example/img:tag", raw_reader=lambda r: raw)
+        self.assertEqual(ref, "registry.example/img:tag")
+        self.assertEqual(digest, "sha256:" + hashlib.sha256(raw).hexdigest())
+
+    def test_resolve_rejects_bad_digest_reference(self):
+        with self.assertRaises(ValueError):
+            metadata.resolve_oci_digest("registry.example/img@sha256:nothex")
+
+    def test_missing_skopeo_is_reported(self):
+        with mock.patch.object(metadata.subprocess, "run", side_effect=FileNotFoundError):
+            with self.assertRaises(RuntimeError):
+                metadata.resolve_oci_digest("registry.example/img:tag")
+
+
+class OciPolicyTest(unittest.TestCase):
+    def test_prefix_match_and_longest_wins(self):
+        conf = {
+            "defaults": {"registered": "warn"},
+            "oci:registry.example": {"kind": "reject"},
+            "oci:registry.example/ns": {"registered": "reject"},
+        }
+        policy = metadata.resolve_oci_policy(conf, "registry.example/ns/img")
+        self.assertTrue(policy.managed)
+        self.assertEqual(policy.level("registered"), "reject")  # more specific section
+        self.assertEqual(policy.level("kind"), "reject")  # inherited from the parent prefix
+
+    def test_unmanaged_without_section(self):
+        policy = metadata.resolve_oci_policy({"defaults": {}}, "registry.example/ns/img")
+        self.assertFalse(policy.managed)
+        self.assertEqual(policy.level("unmanaged"), "allow")
+
+    def test_scope_prefix_is_not_partial_component(self):
+        conf = {"oci:registry.example/ns": {}}
+        self.assertFalse(metadata.resolve_oci_policy(conf, "registry.example/other/img").managed)
+
+    def test_invalid_value_reports_issue(self):
+        conf = {"oci:registry.example": {"min_attestation": "maybe"}}
+        policy = metadata.resolve_oci_policy(conf, "registry.example/img")
+        self.assertEqual(len(policy.issues), 1)
+
+    def test_section_lookup_is_case_insensitive(self):
+        conf = {"oci:Registry.Example": {"kind": "reject"}}
+        self.assertTrue(metadata.resolve_oci_policy(conf, "registry.example/img").managed)
+
+
+class VerifyOciTest(unittest.TestCase):
+    RAW = b'{"schemaVersion":2}'
+    DIGEST = "sha256:" + hashlib.sha256(RAW).hexdigest()
+
+    def _conf(self):
+        return {"hoodi": {"http_provider": "http://localhost:8545", "chainid": "560048",
+                          "contract": "0x02724c2d1e76Ea3A24247A48F959532cDb152Fb6"}}
+
+    def test_registered_oci_image_passes(self):
+        contract = FakeContract(
+            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
+            product=("opensuse-leap", GIT_REF, False),
+            current=self.DIGEST,
+        )
+        with mock.patch.object(metadata, "connect_contract", return_value=contract):
+            digest, results = metadata.verify_oci(
+                "registry.example/img:tag", make_policy(), self._conf(),
+                raw_reader=lambda r: self.RAW)
+        self.assertEqual(digest, self.DIGEST)
+        self.assertEqual(metadata.worst(results), metadata.OK)
+        self.assertEqual(level_of(results, "kind"), metadata.OK)
+
+    def test_wrong_kind_warns(self):
+        contract = FakeContract(
+            build=(1, metadata.BUILD_KINDS["rpmmd"], metadata.ATTESTATION_APPROVED),
+            product=("opensuse-leap", GIT_REF, False),
+            current=self.DIGEST,
+        )
+        with mock.patch.object(metadata, "connect_contract", return_value=contract):
+            _digest, results = metadata.verify_oci(
+                "registry.example/img:tag", make_policy(), self._conf(),
+                raw_reader=lambda r: self.RAW)
+        self.assertEqual(level_of(results, "kind"), metadata.WARN)
+
+    def test_unregistered_image_rejects(self):
+        with mock.patch.object(metadata, "connect_contract", return_value=FakeContract(build=(0, 0, 0))):
+            _digest, results = metadata.verify_oci(
+                "registry.example/img:tag", make_policy(), self._conf(),
+                raw_reader=lambda r: self.RAW)
+        self.assertEqual(metadata.worst(results), metadata.REJECT)
+        self.assertEqual(level_of(results, "registration"), metadata.REJECT)
+
+    def test_resolution_failure_rejects(self):
+        def boom(_ref):
+            raise RuntimeError("no skopeo")
+
+        digest, results = metadata.verify_oci(
+            "registry.example/img:tag", make_policy(), self._conf(), raw_reader=boom)
+        self.assertEqual(digest, "")
+        self.assertEqual(level_of(results, "reference"), metadata.REJECT)
+
+
+class OciCheckMainTest(unittest.TestCase):
+    def _conf(self, text):
+        fd, path = tempfile.mkstemp(suffix=".conf")
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+        self.addCleanup(os.unlink, path)
+        return path
+
+    def _managed_conf(self):
+        return self._conf(
+            "[defaults]\n"
+            "[oci:registry.example]\nnetwork=hoodi\n"
+            "[hoodi]\nhttp_provider=http://localhost:8545\nchainid=560048\ncontract=0xabc\n"
+        )
+
+    def test_unmanaged_scope_with_managed_only_returns_3(self):
+        conf = self._conf("[defaults]\nunmanaged = allow\n")
+        rc = oci_check.main(["--managed-only", "--conf", conf, "registry.example/img:tag"])
+        self.assertEqual(rc, oci_check.UNMANAGED)
+
+    def test_managed_unregistered_image_rejects(self):
+        with mock.patch.object(metadata, "_skopeo_inspect_raw", return_value=b"raw"), \
+             mock.patch.object(metadata, "connect_contract", return_value=FakeContract(build=(0, 0, 0))):
+            rc = oci_check.main(["--conf", self._managed_conf(), "registry.example/img:tag"])
+        self.assertEqual(rc, 1)
+
+    def test_managed_registered_image_prints_pinned_ref(self):
+        digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
+        contract = FakeContract(
+            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
+            product=("opensuse-leap", GIT_REF, False),
+            current=digest,
+        )
+        out = io.StringIO()
+        with mock.patch.object(metadata, "_skopeo_inspect_raw", return_value=b"raw"), \
+             mock.patch.object(metadata, "connect_contract", return_value=contract), \
+             mock.patch("sys.stdout", new=out):
+            rc = oci_check.main(["--print-ref", "--conf", self._managed_conf(),
+                                 "registry.example/img:tag"])
+        self.assertEqual(rc, 0)
+        self.assertIn(f"registry.example/img@{digest}", out.getvalue())
 
 
 if __name__ == "__main__":

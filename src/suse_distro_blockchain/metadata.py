@@ -10,7 +10,10 @@ and therefore runs before zypp converts the metadata into solv data.
 """
 
 import configparser
+import hashlib
 import os
+import re
+import subprocess
 from xml.dom import Node
 from xml.dom.minidom import parse
 
@@ -41,6 +44,11 @@ ATTESTATION_NAMES = {
 
 MAX_VERIFICATION_LEN = 128  # fits sha512 (128 hex chars)
 DEFAULT_CONF = os.path.join(os.sep, "etc", "suse-distro-check.conf")
+
+# OCI images are identified on-chain by their *manifest* digest. For a tag that
+# points at a manifest list (multi-arch) the digest of the list is used, so a
+# product keeps a single, architecture independent "current" value.
+OCI_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 # Digest of the empty string for common algorithms. A git_ref matching one of
 # these is a strong hint the registered commit is bogus/not a real commit.
@@ -191,6 +199,43 @@ def resolve_policy(conf, alias):
     return Policy(alias, values, section is not None, issues)
 
 
+def oci_section(scope):
+    return "oci:" + scope
+
+
+def _match_oci_sections(conf, scope):
+    """Return all ``[oci:<registry/repo>]`` sections covering ``scope``.
+
+    Matching is case-insensitive and prefix based, so
+    ``[oci:registry.example/opensuse]`` also covers
+    ``registry.example/opensuse/leap``. Sections are returned from the least to
+    the most specific prefix so that narrower sections override broader ones.
+    """
+    scope = scope.lower()
+    matches = []
+    for section in conf:
+        if not section.lower().startswith(oci_section("")):
+            continue
+        prefix = section.split(":", 1)[1].strip().lower()
+        if not prefix:
+            continue
+        if scope == prefix or scope.startswith(prefix + "/"):
+            matches.append((len(prefix), section))
+    matches.sort(key=lambda item: item[0])
+    return [section for _length, section in matches]
+
+
+def resolve_oci_policy(conf, scope):
+    """Build the effective policy for an OCI image scope from [oci:<scope>] sections."""
+    values = dict(DEFAULT_POLICY)
+    issues = []
+    _merge_policy(values, conf.get("defaults", {}), issues, "defaults")
+    sections = _match_oci_sections(conf, scope)
+    for section in sections:
+        _merge_policy(values, conf[section], issues, section)
+    return Policy(scope, values, bool(sections), issues)
+
+
 def resolve_network(conf, policy):
     """Return the network settings for a policy.
 
@@ -201,6 +246,65 @@ def resolve_network(conf, policy):
     net = dict(conf.get(name, {}))
     net["network"] = name
     return net
+
+
+# ---------------------------------------------------------------------------
+# OCI image references
+# ---------------------------------------------------------------------------
+def oci_scope(reference):
+    """Return the ``registry/repository`` scope of an image reference.
+
+    Tags and digest suffixes are stripped (``registry.example/ns/img:tag`` and
+    ``registry.example/ns/img@sha256:...`` both yield ``registry.example/ns/img``).
+    """
+    ref = reference.strip()
+    if ref.startswith("docker://"):
+        ref = ref[len("docker://"):]
+    ref = ref.split("@", 1)[0]
+    slash = ref.rfind("/")
+    colon = ref.rfind(":")
+    if colon > slash:  # a tag, not a registry host:port
+        ref = ref[:colon]
+    return ref.lower()
+
+
+def _skopeo_inspect_raw(reference):
+    """Return the raw manifest bytes for ``reference`` via ``skopeo inspect --raw``."""
+    try:
+        proc = subprocess.run(
+            ["skopeo", "inspect", "--raw", reference],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("skopeo is not installed") from exc
+    if proc.returncode != 0:
+        message = proc.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(message or f"skopeo failed with exit code {proc.returncode}")
+    return proc.stdout
+
+
+def resolve_oci_digest(reference, raw_reader=None):
+    """Resolve an image reference to ``(reference, 'sha256:<digest>')``.
+
+    ``raw_reader`` is an optional callable taking a ``docker://`` reference and
+    returning the raw manifest bytes; it defaults to ``skopeo inspect --raw`` and
+    is injectable for tests. When the reference already pins a digest it is
+    returned unchanged without contacting the registry.
+    """
+    ref = reference.strip()
+    if ref.startswith("docker://"):
+        ref = ref[len("docker://"):]
+    if "@" in ref:
+        ref, _, digest = ref.partition("@")
+        digest = digest.strip()
+        if not OCI_DIGEST_RE.match(digest):
+            raise ValueError(f"unsupported digest reference {digest!r}")
+        return ref, digest
+    if not ref:
+        raise ValueError("empty image reference")
+    raw = (raw_reader or _skopeo_inspect_raw)(f"docker://{ref}")
+    return ref, "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +329,12 @@ def contract_at(w3, address):
     if not Web3.is_address(address):
         raise ValueError(f"invalid contract address {address!r}")
     return w3.eth.contract(address=Web3.to_checksum_address(address), abi=CONTRACT_ABI)
+
+
+def connect_contract(net, timeout=10.0, contract_override=None):
+    """Connect to the configured network and return the contract instance."""
+    w3 = connect_provider(net.get("http_provider"), net.get("chainid"), timeout)
+    return contract_at(w3, contract_override or net.get("contract"))
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +364,7 @@ def unmanaged_result(policy):
     return Result(
         "unmanaged",
         policy.unmanaged_level,
-        f"no policy configured for repository {policy.alias!r}",
+        f"no policy configured for {policy.alias!r}",
     )
 
 
@@ -281,15 +391,20 @@ def read_primary_checksum(repomd_path):
     raise ValueError("no primary checksum found in metadata")
 
 
-def verify_build(verification, contract, policy, fsig_path=None):
+def verify_build(verification, contract, policy, fsig_path=None,
+                 expected_kind=BUILD_KINDS["rpmmd"], signed_check=True):
     """Run all on-chain/local checks for ``verification``.
+
+    ``expected_kind`` is the on-chain build kind the caller expects (rpmmd for
+    repositories, oci_container for images). ``signed_check`` controls the
+    optional GPG check, which only makes sense for repository metadata.
 
     Returns a list of :class:`Result`. Failing checks carry the level configured
     in ``policy``; disabled (``ignore``) checks are omitted.
     """
     results = []
 
-    if policy.level("signed") != "ignore":
+    if signed_check and policy.level("signed") != "ignore":
         signed = bool(fsig_path) and os.path.exists(fsig_path)
         if signed:
             results.append(Result("signed", OK, "repository metadata is GPG signed"))
@@ -336,14 +451,15 @@ def verify_build(verification, contract, policy, fsig_path=None):
             )
 
     if policy.level("kind") != "ignore":
-        if kind == BUILD_KINDS["rpmmd"]:
-            results.append(Result("kind", OK, "on-chain build kind is rpmmd"))
+        expected_name = KIND_NAMES.get(expected_kind, str(expected_kind))
+        if kind == expected_kind:
+            results.append(Result("kind", OK, f"on-chain build kind is {expected_name}"))
         else:
             results.append(
                 Result(
                     "kind",
                     policy.level("kind"),
-                    f"on-chain build kind is {kind_name}, expected rpmmd",
+                    f"on-chain build kind is {kind_name}, expected {expected_name}",
                 )
             )
 
@@ -408,8 +524,7 @@ def verify_repomd(repomd_path, policy, conf, fsig_path=None, timeout=10.0, contr
 
     net = resolve_network(conf, policy)
     try:
-        w3 = connect_provider(net.get("http_provider"), net.get("chainid"), timeout)
-        contract = contract_at(w3, contract_override or net.get("contract"))
+        contract = connect_contract(net, timeout, contract_override)
     except Exception as exc:
         level = policy.level("rpc_error")
         if level == "ignore":
@@ -421,3 +536,37 @@ def verify_repomd(repomd_path, policy, conf, fsig_path=None, timeout=10.0, contr
         return verify_build(verification, contract, policy, fsig_path)
     except Exception as exc:
         return [Result("rpc_error", policy.level("rpc_error"), f"on-chain lookup failed: {exc}")]
+
+
+def verify_oci(reference, policy, conf, timeout=10.0, contract_override=None, raw_reader=None):
+    """Full pipeline for an OCI image reference.
+
+    Returns ``(digest, results)``. ``digest`` is the resolved manifest digest
+    (empty when resolution failed) and is what the caller can use to pin a pull.
+    """
+    try:
+        _ref, digest = resolve_oci_digest(reference, raw_reader=raw_reader)
+    except Exception as exc:
+        return "", [Result("reference", REJECT, f"cannot resolve {reference!r}: {exc}")]
+
+    net = resolve_network(conf, policy)
+    try:
+        contract = connect_contract(net, timeout, contract_override)
+    except Exception as exc:
+        level = policy.level("rpc_error")
+        if level == "ignore":
+            return digest, [Result("rpc_error", OK, f"chain not reachable ({exc}); check ignored")]
+        return digest, [Result("rpc_error", level, f"chain not reachable for network "
+                                                    f"{net.get('network')!r}: {exc}")]
+
+    try:
+        results = verify_build(
+            digest,
+            contract,
+            policy,
+            expected_kind=BUILD_KINDS["oci_container"],
+            signed_check=False,
+        )
+    except Exception as exc:
+        return digest, [Result("rpc_error", policy.level("rpc_error"), f"on-chain lookup failed: {exc}")]
+    return digest, results

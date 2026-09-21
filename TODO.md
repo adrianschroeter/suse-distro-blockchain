@@ -5,7 +5,10 @@ TODO (before production)
 * Foundation owner has overwrite permissions atm. This should get removed
   before production.
 
-* Adding examples and tooling to support container attestations.
+* Container attestations are supported via `suse-distro-oci-check` and the
+  `spodman` front end (see USAGE.md). Still missing: an example/spec for the OBS side
+  (how a container build registers its manifest digest) and native
+  `containers-policy.json` signature requirements as a second layer.
 
 * Currently each party (foundation, builder, validator) is a single signer.
   We need to cover groups here in a way that at least critical operations

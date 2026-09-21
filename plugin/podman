@@ -1,0 +1,25 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""spodman entry point.
+
+This is a verifying front end for podman: call ``spodman`` instead of ``podman``
+to verify remote images against the distro attestation contract before they are
+pulled. It delegates to the real podman binary after verification.
+
+The file keeps the name ``podman`` (so it sits next to the zypp plugin); the rpm
+installs it and creates a ``spodman`` symlink in ``%{_bindir}``, which is the
+command users call. This never shadows the real ``podman``.
+
+See ``suse_distro_blockchain.spodman_shim`` for the implementation.
+"""
+
+import os
+import sys
+
+# remember our own path so the real podman lookup does not recurse into the shim
+os.environ.setdefault("SUSE_DISTRO_SPODMAN_SELF", os.path.realpath(__file__))
+
+from suse_distro_blockchain.spodman_shim import main
+
+if __name__ == "__main__":
+    sys.exit(main())

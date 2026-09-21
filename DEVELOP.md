@@ -63,11 +63,15 @@ from vyper 0.4.1 onward. Keep the pin and the build environment at >= 0.4.1.
 
 ### RPM / wheel packaging
 
-`pyproject.toml` uses setuptools with PEP 621 metadata and exposes two console
-scripts, so a built wheel installs both executables:
+`pyproject.toml` uses setuptools with PEP 621 metadata and exposes three console
+scripts, so a built wheel installs the repository tooling:
 
 * `suse-distro-check` (`src/suse_distro_blockchain/suse_distro_check.py`)
+* `suse-distro-oci-check` (`src/suse_distro_blockchain/oci_check.py`)
 * `distro_tool` (`src/suse_distro_blockchain/distro_tool.py`)
+
+`spodman` is **not** a console script; it is provided by the rpm as a symlink to
+`plugin/podman` (see "spodman front end" below).
 
 Build order matters: run `make contract-build` **before** building the wheel so
 `distro_contract.py` and the `contracts/distro.vy` copy are included. The
@@ -150,6 +154,33 @@ SUSE_DISTRO_CHECK_CONF=./suse-distro-check.conf \
     --file /var/cache/zypp/raw/repo-oss/repodata/repomd.xml \
     --fsig /var/cache/zypp/raw/repo-oss/repodata/repomd.xml.asc
 echo $?   # 0 = allow, 1 = discard the repository
+```
+
+### spodman front end
+
+Podman has no pull-time plugin hook (`containers-policy.json` only supports
+signature based requirements), so container verification uses a `spodman`
+front end instead. The rpm installs `plugin/podman` and creates a `spodman`
+symlink in `%{_bindir}`, so users call `spodman` instead of `podman` and the
+real `podman` command stays untouched. It calls `suse-distro-oci-check` for
+`pull`/`run`/`create` and delegates to the real podman (found via `PODMAN_REAL`
+or the rest of `PATH`) with the reference rewritten to
+`image@sha256:<verified digest>`.
+
+The logic lives in `src/suse_distro_blockchain/spodman_shim.py` and is unit
+tested in `test_spodman_shim.py`. `suse-distro-oci-check` requires `skopeo`
+(`Requires: skopeo`) to resolve a tag to its manifest digest. Images are
+matched with `[oci:<registry/repo>]` sections; unmatched scopes follow
+`unmanaged` (default `allow`).
+
+```spec
+Requires: skopeo
+
+%install
+install -D -m 0755 plugin/podman \
+    %{buildroot}%{_prefix}/lib/suse-distro-blockchain/podman
+ln -s %{_prefix}/lib/suse-distro-blockchain/podman \
+    %{buildroot}%{_bindir}/spodman
 ```
 
 ## Ape based development

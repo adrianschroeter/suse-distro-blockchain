@@ -95,7 +95,7 @@ Arguments:
 | `name` | 1-16 characters |
 | `git_ref` | hex git commit, 40 (sha1) or 64 (sha256) chars, must match the contract's git_ref |
 | `kind` | `rpmmd` (1), `product` (2) or `oci_container` (4) |
-| `verification` | hex digest of the build artifacts, 1-128 chars. **SHA-512 is supported**: a sha512 digest is 128 hex chars (sha256 is 64). The same value references this build in every later attestation call |
+| `verification` | hex digest of the build artifacts, 1-128 chars. **SHA-512 is supported**: a sha512 digest is 128 hex chars (sha256 is 64). The same value references this build in every later attestation call. For `oci_container` this is the image manifest digest including the `sha256:` prefix (see section 6) |
 
 Example, registering a build identified by its SHA-512 checksum:
 
@@ -232,6 +232,87 @@ it to `warn` or `reject` to enforce signing as well. `min_attestation` is `off`,
 `outstanding` or `approved`; a rejected attestation always fails. `network`
 selects the section (provider, chain id, contract) for that repository; without
 it the `[main] network` section is used.
+
+## 6. Verify a container image (suse-distro-oci-check + spodman)
+
+Container images are registered with `kind = oci_container` (4). The
+`verification` value is the **manifest digest** of the image, i.e.
+`sha256:<64 hex>` (71 chars, fits the contract's 128 char limit):
+
+```bash
+# resolve the digest and register the build (product_creator role)
+DIGEST=$(skopeo inspect --raw docker://registry.example/opensuse/leap:16.1 \
+         | sha256sum | cut -d' ' -f1)
+distro_tool --network hoodi --contract 0xADDRESS \
+    add-build <git_ref> oci_container "sha256:$DIGEST"
+```
+
+For a tag that points at a manifest list (multi-arch), the digest of the list
+is used, so a product keeps a single, architecture independent "current" value.
+
+### Command line
+
+`suse-distro-oci-check` resolves a reference to its manifest digest (via
+`skopeo inspect --raw`, so `skopeo` must be installed) and runs the same
+on-chain checks as repository metadata:
+
+```bash
+suse-distro-oci-check registry.example/opensuse/leap:16.1
+suse-distro-oci-check -v --conf /etc/suse-distro-check.conf <image>
+suse-distro-oci-check --print-ref <image>   # print image@sha256:<digest>
+```
+
+A non-zero exit status means the image must not be used. The reported checks
+are the same as for repositories (`registration`, `product`, `kind`,
+`critical_issues`, `verification`, `current_build`); `kind` expects
+`oci_container`, and the optional GPG check is not run for images.
+
+### Per-image policy
+
+Images are matched by the prefix of their `registry/repository` scope. Sections
+use the same policy values as repositories and are applied from the least to
+the most specific prefix:
+
+```ini
+[defaults]
+unmanaged = allow
+
+[oci:registry.example]
+network = hoodi
+
+[oci:registry.example/opensuse]
+current_build = reject
+```
+
+A scope with no matching `[oci:<scope>]` section follows `[defaults] unmanaged`
+(default `allow`, so unrelated images are never blocked).
+
+### spodman front end
+
+Podman has no pull-time plugin hook (`containers-policy.json` only supports
+signature based requirements), so enforcement uses a small front end installed
+**in parallel** to podman. The rpm ships `plugin/podman` and a `spodman` symlink
+in `/usr/bin`, so the real `podman` command is untouched. Call `spodman`
+instead of `podman` when you want the checks:
+
+```bash
+spodman pull registry.example/opensuse/leap:16.1
+spodman run -it --rm registry.example/opensuse/leap:16.1 sh
+```
+
+For `pull`, `run` and `create` it verifies the remote reference and then
+delegates to the real podman (found via `PODMAN_REAL` or the remaining `PATH`)
+with the reference rewritten to `image@sha256:<verified digest>`, so exactly
+the verified bytes are used. Unmanaged scopes are passed through untouched.
+`--pull=never` and local references (paths, image ids, `containers-storage:`)
+are not verified. Other podman subcommands are forwarded unchanged.
+
+Environment switches:
+
+| variable | meaning |
+| --- | --- |
+| `PODMAN_REAL` | path to the real podman binary |
+| `SUSE_DISTRO_OCI_CHECK_SKIP=1` | bypass verification (also suppresses the lookup for unmanaged scopes) |
 
 ## Testing locally (no RPC, no funds)
 

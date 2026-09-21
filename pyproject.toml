@@ -37,6 +37,7 @@ classifiers = [
 
 [project.scripts]
 suse-distro-check = "suse_distro_blockchain.suse_distro_check:main"
+suse-distro-oci-check = "suse_distro_blockchain.oci_check:main"
 distro_tool = "suse_distro_blockchain.distro_tool:main"
 
 [project.optional-dependencies]
