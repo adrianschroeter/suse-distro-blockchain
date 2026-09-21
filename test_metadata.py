@@ -452,6 +452,28 @@ class OciCheckMainTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn(f"registry.example/img@{digest}", out.getvalue())
 
+    def test_print_ref_keeps_stdout_clean_and_warns_on_stderr(self):
+        digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
+        contract = FakeContract(
+            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_OUTSTANDING),
+            product=("opensuse-leap", GIT_REF, False),
+            current=digest,
+        )
+        conf = self._conf(
+            "[defaults]\nmin_attestation=approved\n"
+            "[oci:registry.example]\nnetwork=hoodi\n"
+            "[hoodi]\nhttp_provider=http://localhost:8545\nchainid=560048\ncontract=0xabc\n"
+        )
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(metadata, "_skopeo_inspect_raw", return_value=b"raw"), \
+             mock.patch.object(metadata, "connect_contract", return_value=contract), \
+             mock.patch("sys.stdout", new=out), mock.patch("sys.stderr", new=err):
+            rc = oci_check.main(["--print-ref", "--conf", conf, "registry.example/img:tag"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.getvalue().strip(), f"registry.example/img@{digest}")
+        self.assertIn("verification", err.getvalue())
+        self.assertIn("warn", err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

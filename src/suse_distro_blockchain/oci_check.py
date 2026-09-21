@@ -50,11 +50,11 @@ def build_parser():
     return parser
 
 
-def emit(result, verbose=True):
+def emit(result, verbose=True, stream=None):
     if not verbose and result.level == OK:
         return
     print(colored(f"[{metadata.TAG[result.level]}] {result.name}: {result.message}",
-                  metadata.COLORS[result.level]))
+                  metadata.COLORS[result.level]), file=stream or sys.stdout)
 
 
 def main(argv=None):
@@ -72,8 +72,12 @@ def main(argv=None):
     if args.network:
         policy.values["network"] = args.network
 
+    # With --print-ref only the pinned reference is written to stdout so that
+    # callers (the spodman front end) can parse it; all diagnostics go to stderr.
+    diag = sys.stderr if args.print_ref else sys.stdout
+
     for issue in policy.issues:
-        print(colored(f"[warn] config: {issue}", "yellow"))
+        print(colored(f"[warn] config: {issue}", "yellow"), file=sys.stderr)
 
     if args.verbose:
         section = metadata.oci_section(scope)
@@ -88,7 +92,7 @@ def main(argv=None):
         if args.managed_only:
             return UNMANAGED
         result = metadata.unmanaged_result(policy)
-        emit(result, verbose=args.verbose or result.level != OK)
+        emit(result, verbose=args.verbose or result.level != OK, stream=diag)
         return 1 if result.level == REJECT else 0
 
     try:
@@ -100,11 +104,11 @@ def main(argv=None):
             contract_override=args.contract,
         )
     except Exception as exc:  # fail closed on the unexpected
-        print(colored(f"[ERROR] internal: {exc}", "red"))
+        print(colored(f"[ERROR] internal: {exc}", "red"), file=diag)
         return 1
 
     for result in results:
-        emit(result, verbose=args.verbose or result.level != OK)
+        emit(result, verbose=args.verbose or result.level != OK, stream=diag)
 
     if metadata.worst(results) == REJECT:
         return 1

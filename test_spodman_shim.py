@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for the spodman argument handling."""
 
+import io
 import os
 import tempfile
 import unittest
@@ -95,19 +96,32 @@ class FindRealPodmanTest(unittest.TestCase):
 
 class VerifyReferenceTest(unittest.TestCase):
     def test_success_returns_pinned_ref(self):
-        proc = mock.Mock(returncode=0, stdout="[OK] registration: ok\nimg@sha256:" + "a" * 64 + "\n",
-                         stderr="")
+        proc = mock.Mock(returncode=0, stdout="img@sha256:" + "a" * 64 + "\n", stderr="")
         with mock.patch.object(spodman_shim.subprocess, "run", return_value=proc):
             code, pinned = spodman_shim.verify_reference("img:tag")
         self.assertEqual(code, 0)
         self.assertEqual(pinned, "img@sha256:" + "a" * 64)
 
+    def test_success_forwards_warnings_from_stderr(self):
+        proc = mock.Mock(returncode=0, stdout="img@sha256:" + "a" * 64 + "\n",
+                         stderr="[warn] registration: not registered on-chain\n")
+        err = io.StringIO()
+        with mock.patch.object(spodman_shim.subprocess, "run", return_value=proc), \
+             mock.patch("sys.stderr", new=err):
+            code, pinned = spodman_shim.verify_reference("img:tag")
+        self.assertEqual(code, 0)
+        self.assertEqual(pinned, "img@sha256:" + "a" * 64)
+        self.assertIn("[warn] registration", err.getvalue())
+
     def test_failure_propagates_exit_code(self):
-        proc = mock.Mock(returncode=1, stdout="[ERROR] registration: nope\n", stderr="")
-        with mock.patch.object(spodman_shim.subprocess, "run", return_value=proc):
+        proc = mock.Mock(returncode=1, stdout="", stderr="[ERROR] registration: nope\n")
+        err = io.StringIO()
+        with mock.patch.object(spodman_shim.subprocess, "run", return_value=proc), \
+             mock.patch("sys.stderr", new=err):
             code, pinned = spodman_shim.verify_reference("img:tag")
         self.assertEqual(code, 1)
         self.assertIsNone(pinned)
+        self.assertIn("[ERROR] registration", err.getvalue())
 
 
 if __name__ == "__main__":

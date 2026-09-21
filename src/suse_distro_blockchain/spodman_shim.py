@@ -190,9 +190,13 @@ def verify_reference(ref):
     """Return ``(exit_code, pinned_reference_or_None)`` for ``ref``."""
     proc = subprocess.run(_verifier_command(ref), stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True)
+    # Diagnostics (including warnings for accepted images) go to stderr; with
+    # --print-ref stdout carries only the pinned reference.
+    if proc.stderr.strip():
+        sys.stderr.write(proc.stderr)
+        if not proc.stderr.endswith("\n"):
+            sys.stderr.write("\n")
     if proc.returncode != 0:
-        if proc.stderr.strip():
-            sys.stderr.write(proc.stderr)
         if proc.stdout.strip():
             sys.stderr.write(proc.stdout)
         return proc.returncode, None
