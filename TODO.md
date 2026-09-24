@@ -5,6 +5,9 @@ TODO (before production)
 * Foundation owner has overwrite permissions atm. This should get removed
   before production.
 
+* Introduce a release manager role who would approve/register the source
+  hash (taking this away from build manager)
+
 * Container attestations are supported via `suse-distro-oci-check` and the
   `spodman` front end (see USAGE.md). Still missing: an example/spec for the OBS side
   (how a container build registers its manifest digest) and native
