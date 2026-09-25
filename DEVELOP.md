@@ -26,10 +26,13 @@ pipx install web3 eth-account eth-tester   # + --network tester for local runs
 ```
 
 Signing key is read at run time from the `PRIVATE_KEY` environment variable or
-from a file passed with `--key-file`. Network settings (RPC provider, chain id,
+from a file passed with `--key-file`. Network settings (RPC endpoints, chain id,
 contract address) come from `suse-distro-check.conf` and can be overridden with
 `--provider`, `--chain-id`, `--contract` or the `HTTP_PROVIDER_URL` / `CHAIN_ID`
-/ `CONTRACT_ADDRESS` environment variables.
+/ `CONTRACT_ADDRESS` environment variables. A network section may list several
+comma-separated endpoints; the verification tools in `suse_distro_blockchain.metadata`
+query all of them in parallel and require them to be reachable and to agree, while
+`distro_tool` sends its transactions to the first one.
 
 ### Contract build artifact
 

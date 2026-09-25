@@ -193,10 +193,11 @@ def _verifier_command(ref):
 
 def verify_reference(ref):
     """Return ``(exit_code, pinned_reference_or_None)`` for ``ref``."""
-    # Diagnostics (including warnings for accepted images) go to stderr, so
-    # stderr is inherited: the verifier writes straight to the terminal and can
-    # colorize its output based on the real destination. With --print-ref
-    # stdout carries only the pinned reference.
+    # Diagnostics go to stderr, so stderr is inherited: the verifier writes
+    # straight to the terminal and can colorize its output based on the real
+    # destination. An accepted image always reports the state of its registered
+    # build there (product, current build, security level, rebuild
+    # attestation); with --print-ref stdout carries only the pinned reference.
     proc = subprocess.run(_verifier_command(ref), stdout=subprocess.PIPE, text=True)
     if proc.returncode != 0:
         return proc.returncode, None

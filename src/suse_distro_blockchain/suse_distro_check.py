@@ -34,6 +34,7 @@ CLI_POLICY = {
     "registered": "warn",
     "critical_issues": "reject",
     "rpc_error": "reject",
+    "consensus": "reject",
     "current_build": "reject",
     "kind": "warn",
     "signed": "ignore",
@@ -101,7 +102,8 @@ def main(argv=None):
     parser.add_argument("--timeout", type=float, default=10.0,
                         help="JSON-RPC timeout in seconds")
     parser.add_argument("-v", "--verbose", action="store_true",
-                        help="also show successful checks")
+                        help="also show the remaining successful checks "
+                             "(the state of a registered build is always shown)")
     args = parser.parse_args(argv)
 
     conf = metadata.load_conf(args.conf or metadata.default_conf_path())
@@ -112,18 +114,21 @@ def main(argv=None):
     net = metadata.resolve_network(conf, base_policy)
     contract_addr = args.contract or net.get("contract")
 
-    print(f"Reaching out to {net.get('http_provider')}")
+    urls = metadata.provider_urls(net)
+    print(f"Reaching out to {len(urls)} RPC endpoint(s): {', '.join(urls)}")
     try:
-        w3 = metadata.connect_provider(net.get("http_provider"), net.get("chainid"), args.timeout)
+        clients = metadata.connect_contracts(net, args.timeout, args.contract)
     except Exception as exc:
         print(metadata.colorize(f"ERROR: {exc}", "red", sys.stdout))
         return 1
 
-    print(f"Used chain ID: {w3.eth.chain_id}, @block: {w3.eth.block_number}, contract: {contract_addr}")
-    try:
-        contract = metadata.contract_at(w3, contract_addr)
-    except Exception as exc:
-        print(metadata.colorize(f"ERROR: {exc}", "red", sys.stdout))
+    for url, endpoint_exc in clients.errors:
+        print(metadata.colorize(f"WARNING: RPC endpoint {url}: {endpoint_exc}", "yellow", sys.stdout))
+
+    print(f"Used chain ID: {clients.chain_id}, @block: {clients.block}, contract: {contract_addr}, "
+          f"endpoints: {len(clients.clients)}/{len(urls)}")
+    if not clients.clients:
+        print(metadata.colorize(f"ERROR: {clients.failure_message()}", "red", sys.stdout))
         return 1
 
     overall = OK
@@ -148,9 +153,12 @@ def main(argv=None):
             continue
 
         policy = metadata.Policy(alias, dict(metadata.DEFAULT_POLICY, **CLI_POLICY), managed=True)
-        results = metadata.verify_build(verification, contract, policy)
+        results = metadata.verify_build(verification, clients, policy)
         for result in results:
-            if not args.verbose and result.level == OK:
+            # the state of a registered build is always reported, the remaining
+            # successful checks only with -v
+            if (not args.verbose and result.level == OK
+                    and result.name not in metadata.BUILD_STATE_CHECKS):
                 continue
             print(metadata.colorize(str(result), metadata.COLORS[result.level], sys.stdout))
             if metadata.LEVEL_ORDER[result.level] > metadata.LEVEL_ORDER[overall]:

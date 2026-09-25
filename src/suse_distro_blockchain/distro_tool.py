@@ -423,9 +423,16 @@ def connect_web3(args):
 
     presets = load_conf(args.conf)
     net = presets.get(args.network, {})
-    url = args.provider or os.environ.get("HTTP_PROVIDER_URL") or net.get("http_provider")
-    if not url:
+    raw = args.provider or os.environ.get("HTTP_PROVIDER_URL") or net.get("http_provider")
+    # the config may list several endpoints for the verification tools; a
+    # transaction is sent to exactly one node, so the first one is used here
+    urls = [part for part in re.split(r"[,\s]+", str(raw or "")) if part]
+    if not urls:
         sys.exit(f"No provider for network '{args.network}'. Use --provider or fill suse-distro-check.conf.")
+    if len(urls) > 1:
+        print(f"warning: {len(urls)} RPC endpoints configured, using the first one for this "
+              f"transaction; the verification tools cross-check all of them", file=sys.stderr)
+    url = urls[0]
 
     w3 = Web3(Web3.HTTPProvider(url))
     if not w3.is_connected():

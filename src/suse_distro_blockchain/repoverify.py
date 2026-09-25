@@ -43,12 +43,17 @@ def build_parser():
     parser.add_argument("--network", help="override the network section")
     parser.add_argument("--contract", help="override the contract address")
     parser.add_argument("--timeout", type=float, default=10.0, help="JSON-RPC timeout in seconds")
-    parser.add_argument("-v", "--verbose", action="store_true", help="explain allowed repositories too")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="also show the remaining successful checks "
+                             "(the state of a registered build is always shown)")
     return parser
 
 
 def emit(result, verbose=True):
-    if not verbose and result.level == OK:
+    # The state of a registered build is always reported, so a refresh says
+    # which product, security level and attestation it accepted; other OK
+    # results (e.g. the RPC endpoint cross-check) only with -v.
+    if not verbose and result.level == OK and result.name not in metadata.BUILD_STATE_CHECKS:
         return
     line = f"[{metadata.TAG[result.level]}] {result.name}: {result.message}"
     print(metadata.colorize(line, metadata.COLORS[result.level], sys.stdout))

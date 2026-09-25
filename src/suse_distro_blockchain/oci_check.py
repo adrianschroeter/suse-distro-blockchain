@@ -44,12 +44,16 @@ def build_parser():
                         help="print the verified image@sha256:<digest> reference on success")
     parser.add_argument("--managed-only", action="store_true",
                         help="exit with status 3 instead of reporting unmanaged scopes")
-    parser.add_argument("-v", "--verbose", action="store_true", help="also show successful checks")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="also show the remaining successful checks "
+                             "(the state of a registered build is always shown)")
     return parser
 
 
 def emit(result, verbose=True, stream=None):
-    if not verbose and result.level == OK:
+    # The state of a registered build is always reported; other OK results
+    # (e.g. the RPC endpoint cross-check) only with -v.
+    if not verbose and result.level == OK and result.name not in metadata.BUILD_STATE_CHECKS:
         return
     stream = stream or sys.stdout
     line = f"[{metadata.TAG[result.level]}] {result.name}: {result.message}"

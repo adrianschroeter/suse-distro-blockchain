@@ -9,6 +9,7 @@ The check performed here is on the *raw* repository metadata (``repodata/repomd.
 and therefore runs before zypp converts the metadata into solv data.
 """
 
+import concurrent.futures
 import configparser
 import hashlib
 import os
@@ -45,6 +46,20 @@ ATTESTATION_NAMES = {
 
 MAX_VERIFICATION_LEN = 128  # fits sha512 (128 hex chars)
 DEFAULT_CONF = os.path.join(os.sep, "etc", "suse-distro-check.conf")
+
+# Checks that describe the state of a registered build: which product it belongs
+# to, whether it is the current one, its security level and the rebuild
+# attestation. Front ends that report the state of every accepted build (the OCI
+# check behind spodman) always print these, so that an accepted image always
+# says why it was accepted. The registration and kind checks are only reported
+# when they fail (the product line already names the product and its kind), and
+# so are other OK results, e.g. the endpoint cross-check.
+BUILD_STATE_CHECKS = (
+    "product",
+    "critical_issues",
+    "verification",
+    "current_build",
+)
 
 # OCI images are identified on-chain by their *manifest* digest. For a tag that
 # points at a manifest list (multi-arch) the digest of the list is used, so a
@@ -119,7 +134,7 @@ def colorize(text, color, stream=None):
     return f"\033[{code}m{text}\033[0m"
 
 # Level applied to a check that fails. ``ignore`` disables the check.
-_LEVEL_KEYS = ("registered", "critical_issues", "rpc_error", "current_build", "kind", "signed")
+_LEVEL_KEYS = ("registered", "critical_issues", "rpc_error", "consensus", "current_build", "kind", "signed")
 _UNMANAGED_LEVELS = ("allow", "warn", "reject")
 _MIN_ATTESTATION_VALUES = ("off", "outstanding", "approved")
 
@@ -130,6 +145,8 @@ DEFAULT_POLICY = {
     "registered": REJECT,
     "critical_issues": REJECT,
     "rpc_error": REJECT,
+    # every configured RPC endpoint answered, and all returned the same data:
+    "consensus": REJECT,
     "current_build": WARN,
     "kind": WARN,
     # GPG signing is optional; the on-chain verification is independent of it.
@@ -356,19 +373,202 @@ def connect_provider(url, chain_id=None, timeout=10.0):
     return w3
 
 
-def contract_at(w3, address):
-    """Return a contract instance for a checksummed address."""
+def provider_urls(net):
+    """Return the RPC endpoints configured in a network section.
+
+    ``http_provider`` carries a comma separated list, so a single key can name
+    several endpoints. Whitespace and empty entries are dropped, duplicates are
+    removed and the configured order is kept.
+    """
+    urls = []
+    for part in re.split(r"[,\s]+", str(net.get("http_provider") or "")):
+        if part and part not in urls:
+            urls.append(part)
+    return urls
+
+
+def checksum_address(address):
+    """Validate a contract address and return its checksummed form."""
     if not address:
         raise ValueError("no contract address configured")
     if not Web3.is_address(address):
         raise ValueError(f"invalid contract address {address!r}")
-    return w3.eth.contract(address=Web3.to_checksum_address(address), abi=CONTRACT_ABI)
+    return Web3.to_checksum_address(address)
+
+
+def contract_at(w3, address):
+    """Return a contract instance for a checksummed address."""
+    return w3.eth.contract(address=checksum_address(address), abi=CONTRACT_ABI)
+
+
+class ProviderUnavailable(Exception):
+    """A configured RPC endpoint could not be reached or failed to answer."""
+
+
+class ProviderDisagreement(Exception):
+    """RPC endpoints returned different data for the same contract call."""
+
+
+def _comparable(value):
+    """Normalise a contract return value so that endpoints can be compared."""
+    if isinstance(value, (list, tuple)):
+        return tuple(_comparable(item) for item in value)
+    if isinstance(value, dict):
+        return tuple(sorted((str(key), _comparable(item)) for key, item in value.items()))
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value)
+    return value
+
+
+def _abbreviate(value, limit=96):
+    text = repr(_comparable(value))
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _contract_call(contract, fn_name, args, kwargs):
+    return getattr(contract.functions, fn_name)(*args).call(**kwargs)
+
+
+class ChainClients:
+    """One contract served by several RPC endpoints, queried in parallel.
+
+    Every endpoint has to answer every call and all answers have to be
+    identical: a single compromised, stale or lying endpoint must not be able
+    to decide the outcome of a check. Calls are pinned to the lowest block
+    number seen at connect time, so endpoints with different sync progress are
+    still compared at the same chain state.
+    """
+
+    def __init__(self, clients=None, errors=None, block=None, chain_id=None, pin=False):
+        self.clients = list(clients or [])  # [(url, contract)]
+        self.errors = list(errors or [])  # [(url, exception)]
+        self.block = block
+        self.chain_id = chain_id
+        self.pin = pin
+
+    @property
+    def cross_checked(self):
+        return self.pin and len(self.clients) > 1
+
+    @property
+    def single(self):
+        """The contract instance of the only connected endpoint."""
+        if not self.clients:
+            raise ProviderUnavailable(self.failure_message())
+        return self.clients[0][1]
+
+    def failure_message(self):
+        """Describe the endpoints that did not connect, if any."""
+        if not self.errors:
+            return "no RPC endpoint connected"
+        details = "; ".join(f"{url}: {exc}" for url, exc in self.errors)
+        total = len(self.clients) + len(self.errors)
+        return f"{len(self.errors)} of {total} RPC endpoints failed ({details})"
+
+    def consensus_message(self, label=None):
+        subject = f" for {label}" if label else ""
+        return (f"all {len(self.clients)} RPC endpoints returned the same data"
+                f"{subject} at block {self.block}")
+
+    def call(self, fn_name, *args):
+        """Run a read-only view on every endpoint and require identical answers."""
+        if self.errors:
+            raise ProviderUnavailable(self.failure_message())
+        if not self.clients:
+            raise ProviderUnavailable("no RPC endpoint connected")
+        kwargs = {"block_identifier": self.block} if self.pin else {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(self.clients)) as pool:
+            futures = {
+                url: pool.submit(_contract_call, contract, fn_name, args, kwargs)
+                for url, contract in self.clients
+            }
+            values, failures = {}, []
+            for url, future in futures.items():
+                try:
+                    values[url] = future.result()
+                except Exception as exc:
+                    failures.append((url, exc))
+        if failures:
+            details = "; ".join(f"{url}: {exc}" for url, exc in failures)
+            raise ProviderUnavailable(
+                f"{len(failures)} of {len(self.clients)} RPC endpoints failed in "
+                f"{fn_name}(): {details}"
+            )
+        if len({_comparable(value) for value in values.values()}) > 1:
+            details = "; ".join(f"{url} -> {_abbreviate(value)}" for url, value in values.items())
+            raise ProviderDisagreement(f"RPC endpoints disagree in {fn_name}(): {details}")
+        return next(iter(values.values()))
+
+
+def clients_of(contract):
+    """Accept either a single contract or a :class:`ChainClients` endpoint set."""
+    if isinstance(contract, ChainClients):
+        return contract
+    return ChainClients(clients=[("(single)", contract)])
+
+
+def connect_contracts(net, timeout=10.0, contract_override=None):
+    """Connect to every RPC endpoint configured in a network section.
+
+    Endpoints are contacted in parallel and each one is verified against the
+    configured chain id; if no chain id is configured they still have to agree
+    on one. A partial failure is not raised: the result carries one entry per
+    connected endpoint plus an entry per failed one, so the caller can report
+    it with the level configured for ``rpc_error``.
+    """
+    urls = provider_urls(net)
+    if not urls:
+        raise ValueError("no http_provider configured")
+    address = contract_override or net.get("contract")
+    checksum_address(address)  # fail fast on a broken address, before any RPC call
+    chain_id = net.get("chainid")
+
+    def _connect(url):
+        w3 = connect_provider(url, chain_id, timeout)
+        contract = contract_at(w3, address)
+        # connect_provider already verified the chain id; the extra calls only
+        # matter when endpoints have to be compared at a common block
+        seen_chain_id, block = (int(chain_id) if chain_id else None), None
+        try:
+            seen_chain_id, block = w3.eth.chain_id, w3.eth.block_number
+        except Exception:  # provider stub without chain state
+            pass
+        if len(urls) > 1 and (seen_chain_id is None or block is None):
+            raise ConnectionError("cannot read chain id and block number")
+        return contract, seen_chain_id, block
+
+    connected, errors = [], []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(urls)) as pool:
+        futures = {url: pool.submit(_connect, url) for url in urls}
+        for url, future in futures.items():
+            try:
+                contract, seen_chain_id, block = future.result()
+            except Exception as exc:
+                errors.append((url, exc))
+                continue
+            connected.append((url, contract, seen_chain_id, block))
+
+    # without a configured chain id the endpoints still have to agree on one
+    if connected:
+        expected = connected[0][2]
+        for url, _contract, seen_chain_id, _block in connected:
+            if seen_chain_id != expected:
+                errors.append((url, ValueError(f"chain id {seen_chain_id} differs from {expected}")))
+        connected = [item for item in connected if item[2] == expected]
+
+    blocks = [item[3] for item in connected if item[3] is not None]
+    return ChainClients(
+        clients=[(url, contract) for url, contract, _chain_id, _block in connected],
+        errors=errors,
+        block=min(blocks) if blocks else None,
+        chain_id=connected[0][2] if connected else None,
+        pin=len(urls) > 1,
+    )
 
 
 def connect_contract(net, timeout=10.0, contract_override=None):
-    """Connect to the configured network and return the contract instance."""
-    w3 = connect_provider(net.get("http_provider"), net.get("chainid"), timeout)
-    return contract_at(w3, contract_override or net.get("contract"))
+    """Connect to the first reachable RPC endpoint and return its contract."""
+    return connect_contracts(net, timeout, contract_override).single
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +637,28 @@ def verify_build(verification, contract, policy, fsig_path=None,
     in ``policy``; disabled (``ignore``) checks are omitted.
     """
     results = []
+    clients = clients_of(contract)
+
+    def _read(fn_name, *args):
+        """Read a view from all endpoints; return ``(value, failure_result)``."""
+        try:
+            return clients.call(fn_name, *args), None
+        except ProviderUnavailable as exc:
+            level = policy.level("rpc_error")
+            if level == "ignore":
+                return None, Result("rpc_error", OK, f"chain not reachable ({exc}); check ignored")
+            return None, Result("rpc_error", level, str(exc))
+        except ProviderDisagreement as exc:
+            level = policy.level("consensus")
+            if level == "ignore":
+                return None, Result("consensus", OK, f"{exc}; check ignored")
+            return None, Result("consensus", level, str(exc))
+
+    def _done(collected):
+        """Report the cross-check once every read agreed."""
+        if clients.cross_checked and policy.level("consensus") != "ignore":
+            collected.append(Result("consensus", OK, clients.consensus_message()))
+        return collected
 
     if signed_check and policy.level("signed") != "ignore":
         signed = bool(fsig_path) and os.path.exists(fsig_path)
@@ -447,7 +669,9 @@ def verify_build(verification, contract, policy, fsig_path=None,
                 Result("signed", policy.level("signed"), "repository metadata has no GPG signature")
             )
 
-    build = contract.functions.get_product_build(verification).call()
+    build, failure = _read("get_product_build", verification)
+    if failure is not None:
+        return results + [failure]
     product_id, kind, attestation = build[0], build[1], build[2]
     if product_id == 0:
         results.append(
@@ -457,10 +681,12 @@ def verify_build(verification, contract, policy, fsig_path=None,
                 f"build {verification} is not registered on-chain",
             )
         )
-        return results
+        return _done(results)
     results.append(Result("registration", OK, f"build is registered as product #{product_id}"))
 
-    product = contract.functions.get_product(product_id).call()
+    product, failure = _read("get_product", product_id)
+    if failure is not None:
+        return results + [failure]
     name, git_ref, critical = product[0], product[1], product[2]
     kind_name = KIND_NAMES.get(kind, str(kind))
     results.append(Result("product", OK, f"{name!r} (git_ref {git_ref}, {kind_name})"))
@@ -537,7 +763,9 @@ def verify_build(verification, contract, policy, fsig_path=None,
             )
 
     if policy.level("current_build") != "ignore":
-        current = contract.functions.current_product_build(name, kind).call()
+        current, failure = _read("current_product_build", name, kind)
+        if failure is not None:
+            return results + [failure]
         if verification == current:
             results.append(Result("current_build", OK, "repository is the current build"))
         else:
@@ -549,7 +777,7 @@ def verify_build(verification, contract, policy, fsig_path=None,
                 )
             )
 
-    return results
+    return _done(results)
 
 
 def verify_repomd(repomd_path, policy, conf, fsig_path=None, timeout=10.0, contract_override=None):
@@ -561,7 +789,7 @@ def verify_repomd(repomd_path, policy, conf, fsig_path=None, timeout=10.0, contr
 
     net = resolve_network(conf, policy)
     try:
-        contract = connect_contract(net, timeout, contract_override)
+        contract = connect_contracts(net, timeout, contract_override)
     except Exception as exc:
         level = policy.level("rpc_error")
         if level == "ignore":
@@ -588,7 +816,7 @@ def verify_oci(reference, policy, conf, timeout=10.0, contract_override=None, ra
 
     net = resolve_network(conf, policy)
     try:
-        contract = connect_contract(net, timeout, contract_override)
+        contract = connect_contracts(net, timeout, contract_override)
     except Exception as exc:
         level = policy.level("rpc_error")
         if level == "ignore":

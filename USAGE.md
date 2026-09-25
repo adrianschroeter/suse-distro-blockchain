@@ -6,8 +6,10 @@ the openSUSE distro attestation contract.
 
 The tool is credential-free and safe for public git: the signing key is read at
 run time from the `PRIVATE_KEY` environment variable or from a file passed via
-`--key-file`. Network settings (RPC provider, chain id, contract address) come
-from `suse-distro-check.conf`.
+`--key-file`. Network settings (RPC endpoints, chain id, contract address) come
+from `suse-distro-check.conf`; a network section may list several endpoints,
+which are then cross-checked by the verification tools (see
+[Multiple RPC endpoints](#multiple-rpc-endpoints)).
 
 ## Prerequisites
 
@@ -31,7 +33,7 @@ Each write operation prints the transaction hash, gas used and a
 | option | meaning |
 | --- | --- |
 | `--network <name>` | preset from `suse-distro-check.conf`; default `sepolia`. Example conf networks: `hoodi`, `sepolia`, `mainnet`, `anvil` |
-| `--provider <url>` | override RPC provider |
+| `--provider <url>` | override the RPC provider (`distro_tool` uses the first configured endpoint) |
 | `--chain-id <id>` | expect this chain id, abort otherwise |
 | `--contract <addr>` | contract address override |
 | `--key-file <path>` | read the hex key from a file |
@@ -214,7 +216,7 @@ Command line:
 ```bash
 suse-distro-check                 # all rpm-md repos with cached metadata
 suse-distro-check repo-oss repo-update
-suse-distro-check -v              # also show successful checks
+suse-distro-check -v              # also show the remaining successful checks
 ```
 
 For each repository the primary metadata checksum (`repodata/<checksum>-primary.xml.*`)
@@ -223,11 +225,47 @@ is looked up on-chain via `get_product_build`, and the following is reported:
 | check | meaning |
 | --- | --- |
 | `registration` | the digest is registered in the contract (config key `registered`) |
+| `consensus` | all configured RPC endpoints returned the same data (config key `consensus`) |
+| `rpc_error` | an RPC endpoint was unreachable (config key `rpc_error`) |
 | `product` | product name / git_ref / build kind |
 | `kind` | on-chain build kind is `rpmmd` |
 | `critical_issues` | `known_critical_issues` flag set by the security team |
 | `verification` | rebuild reproducibility: `outstanding` / `approved` / `rejected` (config key `min_attestation`) |
 | `current_build` | this digest is the current build for the product |
+
+The state of an accepted build (`product`, `critical_issues`, `verification`,
+`current_build`) is **always** reported, by the command line tool as well as by
+the zypp plugin, so every accepted repository states which product, security
+level and attestation it belongs to. The remaining successful checks need `-v`.
+Checks that passed without adding information, such as `registration` and
+`kind`, are only shown with `-v` or when they fail.
+
+### Multiple RPC endpoints
+
+A network section can list several endpoints, separated by commas. The
+verification tools (this CLI, the zypp plugin and the container checks) then
+query **all** of them:
+
+```ini
+[hoodi]
+chainid=560048
+contract=0xADDRESS
+http_provider=https://rpc.hoodi.ethpandaops.io,https://ethereum-hoodi-rpc.publicnode.com
+```
+
+* every endpoint is contacted **in parallel**; the wall clock cost is that of
+  the slowest endpoint, not the sum of all of them;
+* every endpoint must be reachable (`rpc_error`) and all answers must be
+  identical (`consensus`) - one compromised, stale or lying RPC server can
+  therefore no longer decide whether a repository is accepted;
+* all reads are pinned to the **lowest block number** of the set, so endpoints
+  with different sync progress are still compared at the same chain state;
+* if an endpoint is on another chain, or cannot be reached, the check fails
+  with the configured level (default `reject`, i.e. zypper discards that one
+  repository). Use `rpc_error = warn` or fewer endpoints to tolerate a
+  temporarily unavailable server;
+* `distro_tool` sends transactions to the **first** endpoint of the list only
+  and does not cross-check the ones it reads from.
 
 ### Per-repository policy
 
@@ -242,6 +280,7 @@ unmanaged = allow
 registered = reject
 critical_issues = reject
 rpc_error = reject
+consensus = reject
 current_build = warn
 kind = warn
 min_attestation = outstanding
@@ -251,15 +290,15 @@ network = hoodi
 current_build = reject
 ```
 
-Each of `registered`, `critical_issues`, `rpc_error`, `current_build`, `kind`
-and `signed` takes `reject` (discard the repository), `warn` (keep it and print
-a warning) or `ignore` (skip the check). The GPG check is `ignore` by default
-because the on-chain verification does not depend on the package signature; set
-it to `warn` or `reject` to enforce signing as well. `min_attestation` is `off`,
-`outstanding` or `approved`; a rejected attestation fails unless the check is
-disabled with `off`, in which case it is reported as a warning. `network`
-selects the section (provider, chain id, contract) for that repository; without
-it the `[main] network` section is used.
+Each of `registered`, `critical_issues`, `rpc_error`, `consensus`,
+`current_build`, `kind` and `signed` takes `reject` (discard the repository),
+`warn` (keep it and print a warning) or `ignore` (skip the check). The GPG check
+is `ignore` by default because the on-chain verification does not depend on the
+package signature; set it to `warn` or `reject` to enforce signing as well.
+`min_attestation` is `off`, `outstanding` or `approved`; a rejected attestation
+fails unless the check is disabled with `off`, in which case it is reported as a
+warning. `network` selects the section (endpoints, chain id, contract) for that
+repository; without it the `[main] network` section is used.
 
 ## 6. Verify a container image (suse-distro-oci-check + spodman)
 
@@ -291,9 +330,14 @@ suse-distro-oci-check --print-ref <image>   # print image@sha256:<digest>
 ```
 
 A non-zero exit status means the image must not be used. The reported checks
-are the same as for repositories (`registration`, `product`, `kind`,
-`critical_issues`, `verification`, `current_build`); `kind` expects
-`oci_container`, and the optional GPG check is not run for images.
+are the same as for repositories (`registration`, `consensus`, `rpc_error`,
+`product`, `kind`, `critical_issues`, `verification`, `current_build`); `kind`
+expects `oci_container`, and the optional GPG check is not run for images. The
+state of a registered build (`product`, `critical_issues`, `verification`,
+`current_build`) is **always** reported, the remaining successful checks need
+`-v`. Like the repository checks, the image is
+only accepted if **all** RPC endpoints of the configured network are reachable
+and return the same data (see [Multiple RPC endpoints](#multiple-rpc-endpoints)).
 
 ### Per-image policy
 
@@ -334,6 +378,20 @@ with the reference rewritten to `image@sha256:<verified digest>`, so exactly
 the verified bytes are used. Unmanaged scopes are passed through untouched.
 `--pull=never` and local references (paths, image ids, `containers-storage:`)
 are not verified. Other podman subcommands are forwarded unchanged.
+
+Every accepted image reports the state of its registered build, so a pull
+always says what was accepted:
+
+```text
+[OK] product: 'Leap-16.1' (git_ref 1a2b3c…, oci_container)
+[OK] critical_issues: no known critical security issues
+[OK] verification: reproducibility verification is approved
+[OK] current_build: repository is the current build
+```
+
+These lines (and any warning) go to stderr; with `--print-ref` stdout carries
+only the pinned reference. Checks that passed without adding information, such
+as `registration` and `kind`, are only shown with `-v` or when they fail.
 
 Environment switches:
 
