@@ -122,6 +122,33 @@ attestation. A `KIND` is optional — `rpmmd`, `product` or `oci_container` —
 and filters to that build kind; without it, every registered build kind of
 the product is shown.
 
+### From an SPDX SBOM
+
+`register` derives everything from an SPDX 2.x or 3.x JSON SBOM as emitted by
+obs-build (`generate_sbom`), so no checksums have to be copied by hand:
+
+```bash
+# derive and print the values only
+distro_tool --network hoodi --contract 0xADDRESS \
+    register --dry-run Leap-16.1.spdx.json
+
+# register the product and its rpmmd build
+distro_tool --network hoodi --contract 0xADDRESS \
+    register Leap-16.1.spdx.json
+```
+
+| SBOM field | becomes |
+| --- | --- |
+| `name` of the root package (`SPDXRef-DOCUMENT-ROOT`, or the target of the SPDX 3 `describes` relationship) | product `name`, arch and build suffix removed (`Leap-16.1-aarch64-ppc64le-s390x-x86_64-Build50.2` becomes `Leap-16.1`), max 16 chars |
+| fragment of the root package's `vcs` reference, otherwise the md5 in its `obs-disturl` locator | `git_ref`, the product anchor: hex md5 (32), sha1 (40) or sha256 (64) |
+| `rpm-md-primary-checksum` reference, otherwise the `versionInfo` of the first `repository` package with `primaryPackagePurpose: INSTALL`, otherwise the root package `versionInfo` | `rpmmd` build `verification`, stored as bare hex (max 128 chars, so sha512 fits) |
+
+A product medium SBOM contains one `repository` package per `repomd.xml`; only
+the first one is registered, the others are listed as skipped warnings. Since
+the product is only added when no product is anchored at the same `git_ref`, and
+the build only when its verification is not registered yet, re-running `register`
+on the same SBOM is a no-op.
+
 ## 3. Approve or reject a product build attestation
 
 Limitations: This only works for the registered validator account in the contract.

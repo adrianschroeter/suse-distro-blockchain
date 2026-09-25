@@ -11,7 +11,7 @@
 # Regenerate with:
 #   python3 ape/build_contract.py   (or: make contract-build)
 
-import argparse, configparser, hashlib, os, re, sys
+import argparse, configparser, hashlib, json, os, re, sys
 from web3 import Web3
 from web3.exceptions import ContractLogicError
 from eth_account import Account
@@ -159,6 +159,221 @@ def validate_oci_verification(v):
         "verification for oci_container must be a sha256 image digest "
         "('sha256:<64 hex>', or a bare 64 hex digest)."
     )
+
+
+# -- SPDX SBOM parsing (obs-build generate_sbom output) ----------------------
+
+# obs-build names product composes "<product>-<arches>-Build<release>.<inc>",
+# e.g. Leap-16.1-aarch64-ppc64le-s390x-x86_64-Build50.2. Architecture tokens
+# always contain a letter, version/date parts (like 20260924) do not.
+SBOM_BUILD_SUFFIX_RE = re.compile(
+    r"-(?:(?=[a-z0-9_]*[a-z])[a-z0-9_]+-)*Build[0-9][0-9.]*$"
+)
+
+# the md5 in an "obs://.../<md5>-<build>:..." locator
+OBS_MD5_RE = re.compile(r"(?<![0-9a-fA-F])([0-9a-fA-F]{32})(?![0-9a-fA-F])")
+
+# checksum lengths we accept: md5, sha1, sha256, sha512
+CHECKSUM_LENS = (32, 40, 64, 128)
+
+
+def _spdx_packages(doc):
+    """Return all software packages of an SPDX 2.x or 3.x document."""
+    if "@graph" in doc:
+        return [
+            e for e in doc["@graph"]
+            if isinstance(e, dict) and e.get("type") == "software_Package"
+        ]
+    return [p for p in doc.get("packages") or [] if isinstance(p, dict)]
+
+
+def _spdx_root(doc):
+    """Return the package describing the SBOM itself (SPDX 2.x or 3.x)."""
+    if "@graph" in doc:
+        elements = [e for e in doc["@graph"] if isinstance(e, dict)]
+        by_id = {e["spdxId"]: e for e in elements if e.get("spdxId")}
+        doc_ids = [
+            e["spdxId"] for e in elements
+            if e.get("type") == "SpdxDocument" and e.get("spdxId")
+        ]
+        for e in elements:
+            if e.get("type") != "Relationship":
+                continue
+            if str(e.get("relationshipType", "")).lower() != "describes":
+                continue
+            if doc_ids and e.get("from") not in doc_ids:
+                continue
+            targets = e.get("to")
+            targets = targets if isinstance(targets, list) else [targets]
+            for t in targets:
+                if t in by_id:
+                    return by_id[t]
+        sys.exit("No 'describes' relationship found in the SPDX 3 document.")
+
+    packages = _spdx_packages(doc)
+    for p in packages:
+        if p.get("SPDXID") == "SPDXRef-DOCUMENT-ROOT":
+            return p
+    for p in packages:
+        if p.get("SPDXID") in (doc.get("documentDescribes") or []):
+            return p
+    sys.exit("No package with SPDXID SPDXRef-DOCUMENT-ROOT found.")
+
+
+def _spdx_refs(pkg):
+    """Return normalized (type, locator, comment) external reference tuples."""
+    refs = []
+    for r in pkg.get("externalRefs") or []:
+        if not isinstance(r, dict):
+            continue
+        refs.append((
+            str(r.get("referenceType", "")).lower(),
+            r.get("referenceLocator") or "",
+            r.get("comment"),
+        ))
+    for r in pkg.get("externalRef") or []:
+        if not isinstance(r, dict):
+            continue
+        loc = r.get("locator")
+        if isinstance(loc, list):
+            loc = loc[0] if loc else ""
+        typ = str(r.get("externalRefType", "")).lower()
+        comment = r.get("comment")
+        if typ in ("other", "") and comment:
+            # spdx3 encodes obs-disturl as type "other" plus a comment
+            typ = str(comment).lower()
+        refs.append((typ, loc or "", comment))
+    return refs
+
+
+def product_name(root):
+    """Product name of the SBOM root package, without arch/build suffix."""
+    name = root.get("name")
+    if not name:
+        sys.exit("The SPDX root package has no name.")
+    return SBOM_BUILD_SUFFIX_RE.sub("", name)
+
+
+def product_ref(root):
+    """Product anchor: the vcs url fragment, else the md5 of obs-disturl."""
+    refs = _spdx_refs(root)
+    for typ, loc, _comment in refs:
+        if typ != "vcs" or not loc:
+            continue
+        _scheme, _sep, fragment = loc.partition("#")
+        if fragment and is_hex(fragment):
+            return fragment.lower()
+    for typ, loc, _comment in refs:
+        if typ != "obs-disturl" or not loc:
+            continue
+        m = OBS_MD5_RE.search(loc)
+        if m:
+            return m.group(1).lower()
+    sys.exit(
+        "SBOM has neither a 'vcs' reference with a checksum fragment nor an "
+        "'obs-disturl' with an md5 - cannot determine the product reference."
+    )
+
+
+def validate_product_ref(r):
+    """Validate an SBOM derived product anchor (obs md5 or git checksum)."""
+    if not r or not is_hex(r) or len(r) > 64:
+        sys.exit(
+            "product reference must be hex (obs md5, sha1 or sha256, max 64 chars)."
+        )
+    return r.lower()
+
+
+def _checksum_value(v):
+    """Normalize an '<alg>:<hex>' or bare hex checksum to bare lowercase hex."""
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    if not v:
+        return None
+    if ":" in v:
+        alg, _, value = v.rpartition(":")
+        if alg and is_hex(value):
+            return value.lower()
+        return None
+    return v.lower() if is_hex(v) else None
+
+
+def _pkg_version(pkg):
+    return pkg.get("versionInfo") or pkg.get("software_packageVersion")
+
+
+def _pkg_purpose(pkg):
+    purpose = pkg.get("primaryPackagePurpose") or pkg.get("software_primaryPurpose")
+    return str(purpose or "").lower()
+
+
+def rpmmd_checksum(doc, root):
+    """Return (primary checksum, skipped checksums) of the shipped repository.
+
+    obs-build exports the repomd.xml primary checksum either as an explicit
+    'rpm-md-primary-checksum' external reference, as the version of a synthetic
+    'repository' package (installation media), or as the version of the root
+    package (repository sboms). The contract registers a single build per kind,
+    so the first synthetic repository wins and the others are reported as
+    skipped.
+    """
+    for typ, loc, _comment in _spdx_refs(root):
+        if typ == "rpm-md-primary-checksum":
+            value = _checksum_value(loc)
+            if value and len(value) in CHECKSUM_LENS:
+                return value, []
+
+    repos = []
+    for p in _spdx_packages(doc):
+        if str(p.get("name", "")).lower() != "repository":
+            continue
+        if _pkg_purpose(p) != "install":
+            continue
+        value = _checksum_value(_pkg_version(p))
+        if value and len(value) in CHECKSUM_LENS:
+            repos.append(value)
+
+    unique = []
+    for value in repos:
+        if value not in unique:
+            unique.append(value)
+    if unique:
+        return unique[0], unique[1:]
+
+    value = _checksum_value(_pkg_version(root))
+    if value and len(value) in CHECKSUM_LENS:
+        return value, []
+
+    sys.exit(
+        "No rpmmd primary checksum found in the SBOM (expected an "
+        "'rpm-md-primary-checksum' reference or a 'repository' package)."
+    )
+
+
+def _load_sbom(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except OSError as e:
+        sys.exit(f"Cannot read SBOM '{path}': {e}")
+    except json.JSONDecodeError as e:
+        sys.exit(f"'{path}' is not valid JSON: {e}")
+
+
+def _find_product(c, name, git_ref):
+    """Return (product_id, name_collision) of the product anchored at git_ref.
+
+    Product ids start at 1, next_product is the next free id.
+    """
+    collision = False
+    for pid in range(1, c.functions.next_product().call()):
+        p = c.functions.get_product(pid).call()
+        if p[1] == git_ref:
+            return pid, collision
+        if p[0] == name:
+            collision = True
+    return None, collision
 
 
 _TESTER = None
@@ -424,6 +639,46 @@ def do_add_build(w3, c, args):
     send_tx(w3, acct, c.functions.add_product_build(git_ref, kind, ver))
 
 
+def do_register(w3, c, args):
+    """Register product and rpmmd build from an SPDX 2.x or 3.x SBOM."""
+    doc = _load_sbom(args.sbom)
+    root = _spdx_root(doc)
+    name = product_name(root)
+    if not (0 < len(name) <= 16):
+        sys.exit(f"Product name '{name}' is not 1-16 chars (contract limit).")
+    git_ref = validate_product_ref(product_ref(root))
+    checksum, skipped = rpmmd_checksum(doc, root)
+
+    print(f"SBOM     : {args.sbom}")
+    print(f"name     : {name}")
+    print(f"git_ref  : {git_ref}")
+    print(f"rpmmd    : {checksum}")
+    for extra in skipped:
+        print(f"  WARNING: additional repository checksum {extra} skipped")
+
+    if args.dry_run:
+        return
+
+    kind = BUILD_KINDS["rpmmd"]
+    acct = get_signer(w3, args)
+    product_id, collision = _find_product(c, name, git_ref)
+    if product_id is not None:
+        print(f"product  : {product_id} (already registered)")
+    else:
+        if collision:
+            print(f"  WARNING: another product is already named '{name}', the contract has no name index")
+        if not prompt(args, f"add_product(name={name!r}, git_ref={git_ref})"):
+            sys.exit("aborted")
+        send_tx(w3, acct, c.functions.add_product(name, git_ref))
+
+    if c.functions.get_product_build(checksum).call()[0] != 0:
+        print(f"build    : {checksum} is already registered")
+        return
+    if not prompt(args, f"add_product_build(ref={git_ref}, kind={kind}, ver={checksum})"):
+        sys.exit("aborted")
+    send_tx(w3, acct, c.functions.add_product_build(git_ref, kind, checksum))
+
+
 def do_approve(w3, c, args):
     ver = validate_verification(args.verification)
     if not prompt(args, f"approve_attestation({ver})"):
@@ -485,6 +740,11 @@ def build_parser():
              "digest sha256:<64 hex>",
     )
     s.set_defaults(func=do_add_build)
+
+    s = sub.add_parser("register", help="register product and rpmmd build from an SPDX SBOM")
+    s.add_argument("sbom", help="path to an SPDX 2.x or 3.x JSON SBOM (obs-build)")
+    s.add_argument("--dry-run", action="store_true", help="only derive and print the values")
+    s.set_defaults(func=do_register)
 
     s = sub.add_parser("approve")
     s.add_argument("verification")
