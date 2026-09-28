@@ -63,7 +63,7 @@ class FakeFunction:
 
 class FakeContract:
     """Minimal stand-in for a web3 contract with the read-only views we use."""
-    def __init__(self, build=(0, 0, 0), product=("", "", metadata.SECURITY_LEVELS["not_set"]),
+    def __init__(self, build=(0, 0, 0, 0), product=("", ""),
                  current="", exc=None, level=metadata.CONTRACT_COMPATIBILITY):
         self._build = build
         self._product = product
@@ -122,9 +122,11 @@ def make_policy(**overrides):
 def registered_contract(attestation=metadata.ATTESTATION_APPROVED,
                         security_level=metadata.SECURITY_LEVELS["not_set"],
                         kind=metadata.BUILD_KINDS["rpmmd"], current=VERIFICATION):
+    # the security level belongs to the build, not to the product: the contract
+    # resolves it on read and hands it out as the fourth build field
     return FakeContract(
-        build=(1, kind, attestation),
-        product=("example-1", GIT_REF, security_level),
+        build=(1, kind, attestation, security_level),
+        product=("example-1", GIT_REF),
         current=current,
     )
 
@@ -249,7 +251,7 @@ class VerifyBuildTest(unittest.TestCase):
         self.assertEqual(level_of(results, "verification"), metadata.OK)
 
     def test_unregistered_is_reject_by_default(self):
-        contract = FakeContract(build=(0, 0, 0))
+        contract = FakeContract(build=(0, 0, 0, 0))
         results = metadata.verify_build(VERIFICATION, contract, make_policy())
         self.assertEqual(metadata.worst(results), metadata.REJECT)
         self.assertEqual(level_of(results, "registration"), metadata.REJECT)
@@ -439,8 +441,9 @@ class CompatibilityTest(unittest.TestCase):
 
     def test_verify_oci_reports_the_mismatch_with_the_digest(self):
         contract = FakeContract(
-            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
+            build=(1, metadata.BUILD_KINDS["oci_container"],
+                   metadata.ATTESTATION_APPROVED, metadata.SECURITY_LEVELS["not_set"]),
+            product=("opensuse-leap", GIT_REF),
             current=VerifyOciTest.DIGEST,
             level=metadata.CONTRACT_COMPATIBILITY + 1,
         )
@@ -480,7 +483,7 @@ class RepoverifyMainTest(unittest.TestCase):
             "[repo:repo-oss]\nnetwork=hoodi\n"
         )
         with mock.patch.object(metadata, "connect_provider", return_value=object()), \
-             mock.patch.object(metadata, "contract_at", return_value=FakeContract(build=(0, 0, 0))):
+             mock.patch.object(metadata, "contract_at", return_value=FakeContract(build=(0, 0, 0, 0))):
             rc = repoverify.main(["--ralias", "repo-oss", "--file", self._repomd(), "--conf", conf])
         self.assertEqual(rc, 1)
 
@@ -523,8 +526,9 @@ class RepoverifyMainTest(unittest.TestCase):
     def test_repo_build_state_report_flags_a_stale_build_and_known_issues(self):
         conf = self._managed_conf("critical_issues=warn\ncurrent_build=warn\n")
         contract = FakeContract(
-            build=(1, metadata.BUILD_KINDS["rpmmd"], metadata.ATTESTATION_APPROVED),
-            product=("example-1", GIT_REF, metadata.SECURITY_LEVELS["critical"]),
+            build=(1, metadata.BUILD_KINDS["rpmmd"],
+                   metadata.ATTESTATION_APPROVED, metadata.SECURITY_LEVELS["critical"]),
+            product=("example-1", GIT_REF),
             current="stale",
         )
         out = io.StringIO()
@@ -627,8 +631,9 @@ class VerifyOciTest(unittest.TestCase):
 
     def test_registered_oci_image_passes(self):
         contract = FakeContract(
-            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
+            build=(1, metadata.BUILD_KINDS["oci_container"],
+                   metadata.ATTESTATION_APPROVED, metadata.SECURITY_LEVELS["not_set"]),
+            product=("opensuse-leap", GIT_REF),
             current=self.DIGEST,
         )
         with mock.patch.object(metadata, "connect_contracts", return_value=endpoints(contract)):
@@ -641,8 +646,9 @@ class VerifyOciTest(unittest.TestCase):
 
     def test_wrong_kind_warns(self):
         contract = FakeContract(
-            build=(1, metadata.BUILD_KINDS["rpmmd"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
+            build=(1, metadata.BUILD_KINDS["rpmmd"],
+                   metadata.ATTESTATION_APPROVED, metadata.SECURITY_LEVELS["not_set"]),
+            product=("opensuse-leap", GIT_REF),
             current=self.DIGEST,
         )
         with mock.patch.object(metadata, "connect_contracts", return_value=endpoints(contract)):
@@ -652,7 +658,7 @@ class VerifyOciTest(unittest.TestCase):
         self.assertEqual(level_of(results, "kind"), metadata.WARN)
 
     def test_unregistered_image_rejects(self):
-        with mock.patch.object(metadata, "connect_contracts", return_value=endpoints(FakeContract(build=(0, 0, 0)))):
+        with mock.patch.object(metadata, "connect_contracts", return_value=endpoints(FakeContract(build=(0, 0, 0, 0)))):
             _digest, results = metadata.verify_oci(
                 "registry.example/img:tag", make_policy(), self._conf(),
                 raw_reader=lambda r: self.RAW)
@@ -691,15 +697,16 @@ class OciCheckMainTest(unittest.TestCase):
 
     def test_managed_unregistered_image_rejects(self):
         with mock.patch.object(metadata, "_skopeo_inspect_raw", return_value=b"raw"), \
-             mock.patch.object(metadata, "connect_contracts", return_value=endpoints(FakeContract(build=(0, 0, 0)))):
+             mock.patch.object(metadata, "connect_contracts", return_value=endpoints(FakeContract(build=(0, 0, 0, 0)))):
             rc = oci_check.main(["--conf", self._managed_conf(), "registry.example/img:tag"])
         self.assertEqual(rc, 1)
 
     def test_managed_registered_image_prints_pinned_ref(self):
         digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
         contract = FakeContract(
-            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
+            build=(1, metadata.BUILD_KINDS["oci_container"],
+                   metadata.ATTESTATION_APPROVED, metadata.SECURITY_LEVELS["not_set"]),
+            product=("opensuse-leap", GIT_REF),
             current=digest,
         )
         out, err = io.StringIO(), io.StringIO()
@@ -719,8 +726,9 @@ class OciCheckMainTest(unittest.TestCase):
     def test_accepted_image_always_reports_the_build_state(self):
         digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
         contract = FakeContract(
-            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
+            build=(1, metadata.BUILD_KINDS["oci_container"],
+                   metadata.ATTESTATION_APPROVED, metadata.SECURITY_LEVELS["not_set"]),
+            product=("opensuse-leap", GIT_REF),
             current=digest,
         )
         out = io.StringIO()
@@ -744,8 +752,9 @@ class OciCheckMainTest(unittest.TestCase):
     def test_build_state_report_flags_a_stale_image_and_known_issues(self):
         digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
         contract = FakeContract(
-            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["important"]),
+            build=(1, metadata.BUILD_KINDS["oci_container"],
+                   metadata.ATTESTATION_APPROVED, metadata.SECURITY_LEVELS["important"]),
+            product=("opensuse-leap", GIT_REF),
             current="sha256:" + "1" * 64,
         )
         conf = self._conf(
@@ -766,8 +775,9 @@ class OciCheckMainTest(unittest.TestCase):
 
     def test_endpoint_cross_check_stays_behind_verbose(self):
         contract = FakeContract(
-            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
+            build=(1, metadata.BUILD_KINDS["oci_container"],
+                   metadata.ATTESTATION_APPROVED, metadata.SECURITY_LEVELS["not_set"]),
+            product=("opensuse-leap", GIT_REF),
             current="sha256:" + hashlib.sha256(b"raw").hexdigest(),
         )
         cross_checked = endpoints(contract, contract)
@@ -788,8 +798,9 @@ class OciCheckMainTest(unittest.TestCase):
     def test_print_ref_keeps_stdout_clean_and_warns_on_stderr(self):
         digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
         contract = FakeContract(
-            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_OUTSTANDING),
-            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
+            build=(1, metadata.BUILD_KINDS["oci_container"],
+                   metadata.ATTESTATION_OUTSTANDING, metadata.SECURITY_LEVELS["not_set"]),
+            product=("opensuse-leap", GIT_REF),
             current=digest,
         )
         conf = self._conf(

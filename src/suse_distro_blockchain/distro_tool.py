@@ -43,11 +43,18 @@ ATTESTATION_NAMES = {0: "none", 1: "outstanding", 2: "approved", 4: "rejected"}
 # interface level of the contract this tool was written for; the contract
 # publishes its own compatibility_level() and is rejected when it differs
 COMPATIBILITY_LEVEL = 1
-# severity of the security issues known for a product, set by the security team
-# via set_security_level(); the values are the vyper flag encoding
+# severity of the security issues known for a build, set by the security team
+# via set_security_level() for the build an issue was found in; the values are
+# the vyper flag encoding
 SECURITY_LEVELS = {"not_set": 1, "low": 2, "moderate": 4, "important": 8, "critical": 16}
 SECURITY_LEVEL_NAMES = {value: name for name, value in SECURITY_LEVELS.items()}
 SECURITY_LEVEL_NAMES[0] = "not_set"
+
+# how many security reports one product keeps on chain, must match
+# MAX_SECURITY_MARKERS in ape/contracts/distro.vy. Re-reporting a build that is
+# already reported updates it, so this limits how many builds of a product can
+# ever be flagged, not how many reports can be corrected.
+MAX_SECURITY_MARKERS = 256
 
 _TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 _PKG_CONTRACT_SOURCE = os.path.join(_TOOL_DIR, CONTRACT_SOURCE)
@@ -531,12 +538,19 @@ def send_tx(w3, acct, fn_obj, gas=None):
             est_gas = int(fn_obj.estimate_gas({"from": sender}) * 1.2) + 1
         except ContractLogicError as e:
             reason = str(e).strip() or "execution reverted"
+            hint = ""
+            if getattr(fn_obj, "fn_name", "") == "set_security_level":
+                hint = (
+                    f"\n  set_security_level needs a registered build and at most"
+                    f" {MAX_SECURITY_MARKERS} flagged builds per product;\n"
+                    f"  reports already made can still be corrected."
+                )
             sys.exit(
                 f"Transaction would revert: {reason}\n"
                 f"  function : {getattr(fn_obj, 'fn_name', '?')}\n"
                 f"  from     : {sender}\n"
                 "  The signing account may be missing the required role.\n"
-                "  Check roles with the 'roles' command (or pass --gas to force)."
+                f"  Check roles with the 'roles' command (or pass --gas to force).{hint}"
             )
         except Exception as e:
             print(f"Warning: gas estimation failed ({e}), using 200000")
@@ -590,7 +604,17 @@ def do_showid(w3, c, args):
     print(f"id      : {args.product_id}")
     print(f"name    : {p[0]}")
     print(f"git_ref : {p[1]}")
-    print(f"security: {SECURITY_LEVEL_NAMES.get(p[2], f'unknown ({p[2]})')}")
+    # the reports as they were made, not the levels they imply: the contract
+    # resolves a build to the newest report that is not older than it
+    history = c.functions.product_security(args.product_id).call()
+    if not history:
+        print("security: no reports, every build is not_set")
+        return
+    print(f"security: {len(history)} of {MAX_SECURITY_MARKERS} reports used")
+    for marker in history:
+        verification, value = marker[0], marker[1]
+        level = SECURITY_LEVEL_NAMES.get(value, f"unknown ({value})")
+        print(f"  {verification}  {level}  (applies to this and all older builds)")
 
 
 def do_build(w3, c, args):
@@ -598,6 +622,7 @@ def do_build(w3, c, args):
     print(f"product_id  : {b[0]}")
     print(f"kind        : {b[1]}")
     print(f"attestation : {ATTESTATION_NAMES.get(b[2], b[2])}")
+    print(f"security    : {SECURITY_LEVEL_NAMES.get(b[3], f'unknown ({b[3]})')}")
 
 
 BUILD_KIND_NAMES = {v: k for k, v in BUILD_KINDS.items()}
@@ -652,7 +677,7 @@ def do_current(w3, c, args):
         print(f"Build verification : {ver}")
         print()
 
-        level = SECURITY_LEVEL_NAMES.get(product[2], f"unknown ({product[2]})")
+        level = SECURITY_LEVEL_NAMES.get(build[3], f"unknown ({build[3]})")
         if level == "not_set":
             print("  Security level     : not_set - no known security issues")
         else:
@@ -766,10 +791,23 @@ def do_reject(w3, c, args):
 
 def do_set_security_level(w3, c, args):
     value, name = parse_security_level(args.level)
-    if not prompt(args, f"set_security_level(id={args.product_id}, level={name})"):
+    ver = validate_verification(args.verification)
+    # the report needs a product, which only a registered build has
+    build = c.functions.get_product_build(ver).call()
+    product_id, kind = build[0], build[1]
+    if not product_id:
+        sys.exit(f"Build {ver} is not registered on chain, so it has no product to report on.")
+    product = c.functions.get_product(product_id).call()
+    kind_name = BUILD_KIND_NAMES.get(kind, f"unknown ({kind})")
+    if name == "not_set":
+        what = "withdraw the security report of"
+    else:
+        what = f"report security level {name} for"
+    if not prompt(args, f"set_security_level({what} build {ver} of product "
+                        f"{product[0]!r} ({kind_name}))"):
         sys.exit("aborted")
     acct = get_signer(w3, args)
-    send_tx(w3, acct, c.functions.set_security_level(args.product_id, value))
+    send_tx(w3, acct, c.functions.set_security_level(ver, value))
 
 
 # -- CLI parser ---------------------------------------------------------------
@@ -823,9 +861,14 @@ def build_parser():
     s.add_argument("verification")
     s.set_defaults(func=do_reject)
 
-    s = sub.add_parser("set-security-level",
-                       help="set the security level of a product (security_team role)")
-    s.add_argument("product_id", type=int)
+    s = sub.add_parser(
+        "set-security-level",
+        help="report the security level of a build (security_team role). The report "
+             "applies to that build and to every build of the product registered "
+             "before it; use not_set to withdraw it again",
+    )
+    s.add_argument("verification",
+                   help="build checksum (hex) of the build the report is about")
     s.add_argument("level", type=security_level_name,
                    help="not_set/low/moderate/important/critical or 1/2/4/8/16")
     s.set_defaults(func=do_set_security_level)

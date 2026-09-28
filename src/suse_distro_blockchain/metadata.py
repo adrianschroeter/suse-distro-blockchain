@@ -44,11 +44,11 @@ ATTESTATION_NAMES = {
     ATTESTATION_REJECTED: "rejected",
 }
 
-# Severity of the security issues known for a product, set by the security team
-# via set_security_level(). Vyper encodes a flag as a bit shift, so the values
-# are 1, 2, 4, 8, 16 and grow with severity, exactly like BuildKinds above.
-# A never written slot reads as 0, which is not a flag member and therefore
-# also means "nothing reported".
+# Severity of the security issues known for a build, set by the security team
+# via set_security_level() for the build an issue was found in. Vyper encodes a
+# flag as a bit shift, so the values are 1, 2, 4, 8, 16 and grow with severity,
+# exactly like BuildKinds above. A never reported build reads as 0, which is not
+# a flag member and therefore also means "nothing reported".
 SECURITY_LEVELS = {"not_set": 1, "low": 2, "moderate": 4, "important": 8, "critical": 16}
 SECURITY_LEVEL_NAMES = {value: name for name, value in SECURITY_LEVELS.items()}
 SECURITY_LEVEL_NAMES[0] = "not_set"
@@ -180,7 +180,7 @@ DEFAULT_POLICY = {
     "min_attestation": "outstanding",
     # highest security level that is still tolerated: any level above it fails
     # with the level configured for critical_issues. "not_set" (the default)
-    # means only a product without reported issues is accepted.
+    # means only a build without reported issues is accepted.
     "max_critical_issues": "not_set",
     # optional per repo network override (section name in the config file):
     "network": "",
@@ -689,14 +689,15 @@ def read_primary_checksum(repomd_path):
 
 
 def _security_level_result(product_name, level, policy):
-    """Compare the on-chain security level of a product with the tolerated maximum.
+    """Compare the security level in effect for a build with the tolerated maximum.
 
-    ``level`` is the raw value of ``my_product.security_level``: the vyper flag
-    encoding of SecurityLevel (``not_set``, ``low``, ``moderate``, ``important``,
-    ``critical``), where a never written slot reads as 0 and also means
-    "nothing reported". The level itself is always reported, because it is part
-    of the state of a build; only a level above ``max_critical_issues`` fails,
-    and then with the configured ``critical_issues`` level.
+    ``level`` is the raw value of ``my_product_build.security_level``: the vyper
+    flag encoding of SecurityLevel (``not_set``, ``low``, ``moderate``,
+    ``important``, ``critical``), where a build that is newer than every report
+    of its product reads as 0 and also means "nothing reported". The level
+    itself is always reported, because it is part of the state of a build; only
+    a level above ``max_critical_issues`` fails, and then with the configured
+    ``critical_issues`` level.
     """
     level_name = SECURITY_LEVEL_NAMES.get(int(level), None)
     if level_name is None:
@@ -778,7 +779,7 @@ def verify_build(verification, contract, policy, fsig_path=None,
     build, failure = _read("get_product_build", verification)
     if failure is not None:
         return results + [failure]
-    product_id, kind, attestation = build[0], build[1], build[2]
+    product_id, kind, attestation, security_level = build[0], build[1], build[2], build[3]
     if product_id == 0:
         results.append(
             Result(
@@ -793,7 +794,7 @@ def verify_build(verification, contract, policy, fsig_path=None,
     product, failure = _read("get_product", product_id)
     if failure is not None:
         return results + [failure]
-    name, git_ref, level = product[0], product[1], product[2]
+    name, git_ref = product[0], product[1]
     kind_name = KIND_NAMES.get(kind, str(kind))
     results.append(Result("product", OK, f"{name!r} (git_ref {git_ref}, {kind_name})"))
 
@@ -829,7 +830,7 @@ def verify_build(verification, contract, policy, fsig_path=None,
                 )
             )
 
-    results.append(_security_level_result(name, level, policy))
+    results.append(_security_level_result(name, security_level, policy))
 
     min_attestation = policy.values["min_attestation"]
     att_name = ATTESTATION_NAMES.get(attestation, str(attestation))
