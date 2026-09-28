@@ -749,12 +749,17 @@ def prompt(args, msg):
 # -- read-only commands -------------------------------------------------------
 
 def do_roles(w3, c, args):
-    print(f"compatibility_level: {c.functions.compatibility_level().call()}")
-    print(f"foundation_owner : {c.functions.foundation_owner().call()}")
-    print(f"product_creator  : {c.functions.product_creator().call()}")
-    print(f"official_validator: {c.functions.official_validator().call()}")
-    print(f"security_team    : {c.functions.security_team().call()}")
-    print(f"next_product     : {c.functions.next_product().call()}")
+    fields = [
+        ("compatibility_level", c.functions.compatibility_level().call()),
+        ("foundation_owner", c.functions.foundation_owner().call()),
+        ("product_creator", c.functions.product_creator().call()),
+        ("official_validator", c.functions.official_validator().call()),
+        ("security_team", c.functions.security_team().call()),
+        # next_product is the next free id, so the count is one lower
+        ("registered products", c.functions.get_product_counter().call()),
+    ]
+    for label, value in fields:
+        print(f"{label:<19}: {value}")
 
 
 def do_counter(w3, c, args):
