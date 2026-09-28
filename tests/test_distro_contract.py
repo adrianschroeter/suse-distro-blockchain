@@ -29,6 +29,9 @@ def main():
     build_kind = 1
     # SecurityLevel flag values; vyper encodes a flag as a bit shift
     NOT_SET, LOW, MODERATE, IMPORTANT, CRITICAL = 1, 2, 4, 8, 16
+    # interface level this tool was written for, see compatibility_level in the
+    # contract and CONTRACT_COMPATIBILITY / COMPATIBILITY_LEVEL in the clients
+    COMPATIBILITY_LEVEL = 1
 
     # our roles
     foundation_owner = Account.create('KEYSMASH FJAFJKLDSKF7JKFDJ 1530')
@@ -41,6 +44,12 @@ def main():
     boa.env.eoa = foundation_owner.address
     contract = boa.load(CONTRACT_SOURCE, product_creator.address, validator.address,
                         security_team.address)
+
+    # the contract has to tell the tooling which interface it implements
+    if contract.compatibility_level() != COMPATIBILITY_LEVEL:
+        print("Unexpected compatibility level")
+        raise SystemExit(1)
+    print("Contract compatibility level is 1")
 
     #
     # Register a product build

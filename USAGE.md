@@ -238,6 +238,7 @@ is looked up on-chain via `get_product_build`, and the following is reported:
 | check | meaning |
 | --- | --- |
 | `registration` | the digest is registered in the contract (config key `registered`) |
+| `compatibility` | the contract implements the interface level this tool was written for (config key `compatibility`) |
 | `consensus` | all configured RPC endpoints returned the same data (config key `consensus`) |
 | `rpc_error` | an RPC endpoint was unreachable (config key `rpc_error`) |
 | `product` | product name / git_ref / build kind |
@@ -304,8 +305,8 @@ network = hoodi
 current_build = reject
 ```
 
-Each of `registered`, `critical_issues`, `rpc_error`, `consensus`,
-`current_build`, `kind` and `signed` takes `reject` (discard the repository),
+Each of `registered`, `critical_issues`, `compatibility`, `rpc_error`,
+`consensus`, `current_build`, `kind` and `signed` takes `reject` (discard the repository),
 `warn` (keep it and print a warning) or `ignore` (skip the check). The GPG check
 is `ignore` by default because the on-chain verification does not depend on the
 package signature; set it to `warn` or `reject` to enforce signing as well.
@@ -315,8 +316,10 @@ warning. `max_critical_issues` is the highest security level still accepted
 (`not_set`, `low`, `moderate`, `important`, `critical`): the default accepts only
 products without reported issues, raise it to keep using a product with known
 issues up to that level, and the level itself is reported either way.
-`network` selects the section (endpoints, chain id, contract) for that
-repository; without it the `[main] network` section is used.
+`compatibility` is the level reported when the contract does not implement the
+interface level of the tools (see [Contract versioning](#contract-versioning));
+it is `reject` by default. `network` selects the section (endpoints, chain id,
+contract) for that repository; without it the `[main] network` section is used.
 
 ## 6. Verify a container image (suse-distro-oci-check + spodman)
 
@@ -417,6 +420,29 @@ Environment switches:
 | --- | --- |
 | `PODMAN_REAL` | path to the real podman binary |
 | `SUSE_DISTRO_OCI_CHECK_SKIP=1` | bypass verification (also suppresses the lookup for unmanaged scopes) |
+
+## Contract versioning
+
+The contract publishes an interface level as the constant `compatibility_level()`.
+Every tool checks it before it reads any product data and refuses a contract
+with a different level: a contract published before that view existed is
+incompatible with all current tools, and a newer contract needs a newer tool
+than the one that reads it. This keeps a client from silently misreading a
+changed storage layout, which is exactly what happened to the old boolean
+security flag.
+
+```console
+$ suse-distro-check --repo-oss /srv/www/obs/repo/oss
+[REJECT] compatibility: cannot read compatibility_level() from the configured
+contract (...); it either predates the contract versioning or an endpoint
+cannot answer, while this tool implements level 1
+```
+
+The level is bumped in `ape/contracts/distro.vy` for every breaking change of
+the ABI or the storage layout; the clients compare against
+`CONTRACT_COMPATIBILITY` (`metadata.py`) and `COMPATIBILITY_LEVEL`
+(`distro_tool.py`). `distro_tool` reports the same mismatch as an error and
+tells you to update the tool or to redeploy the contract.
 
 ## Testing locally (no RPC, no funds)
 

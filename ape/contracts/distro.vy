@@ -5,9 +5,18 @@
 # SHA-256 string for git refs
 #type GitVerificationType = String[64]
 
+# Interface level of this contract, readable with compatibility_level().
+#
+# It is bumped on every breaking change of the ABI or the storage layout, e.g.
+# when the boolean known_critical_issues became the SecurityLevel flag. The
+# tooling compares it with the level it was built for before it reads anything
+# else, so a client never misinterprets the on-chain data of a contract it does
+# not understand. Deployments without this constant predate the versioning and
+# are therefore incompatible with every current tool.
+compatibility_level: public(constant(uint256)) = 1
+
 # The board of openSUSE community. Or the leadership team of SUSE.com.
 foundation_owner: public(address)
-
 # Empower an OBS admin to create products initially
 product_creator: public(address)
 

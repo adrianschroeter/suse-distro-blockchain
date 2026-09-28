@@ -58,6 +58,15 @@ SECURITY_LEVEL_ORDER = ("not_set", "low", "moderate", "important", "critical")
 MAX_VERIFICATION_LEN = 128  # fits sha512 (128 hex chars)
 DEFAULT_CONF = os.path.join(os.sep, "etc", "suse-distro-check.conf")
 
+# Interface level of the contract this tool was written for. The contract
+# publishes its own level (compatibility_level in ape/contracts/distro.vy) and
+# every entry point compares the two before it reads any product data, so a
+# client never misinterprets the storage layout of a contract it does not
+# understand. Deployments without that view predate the versioning and are
+# rejected. Bump this together with the contract constant, and only on a
+# breaking change of the ABI or the storage layout.
+CONTRACT_COMPATIBILITY = 1
+
 # Checks that describe the state of a registered build: which product it belongs
 # to, whether it is the current one, its security level and the rebuild
 # attestation. Front ends that report the state of every accepted build (the OCI
@@ -145,7 +154,8 @@ def colorize(text, color, stream=None):
     return f"\033[{code}m{text}\033[0m"
 
 # Level applied to a check that fails. ``ignore`` disables the check.
-_LEVEL_KEYS = ("registered", "critical_issues", "rpc_error", "consensus", "current_build", "kind", "signed")
+_LEVEL_KEYS = ("registered", "critical_issues", "rpc_error", "consensus", "current_build",
+               "kind", "signed", "compatibility")
 _UNMANAGED_LEVELS = ("allow", "warn", "reject")
 _MIN_ATTESTATION_VALUES = ("off", "outstanding", "approved")
 
@@ -156,6 +166,8 @@ DEFAULT_POLICY = {
     "registered": REJECT,
     "critical_issues": REJECT,
     "rpc_error": REJECT,
+    # the contract has to be the interface this tool was written for:
+    "compatibility": REJECT,
     # every configured RPC endpoint answered, and all returned the same data:
     "consensus": REJECT,
     "current_build": WARN,
@@ -595,6 +607,33 @@ def connect_contract(net, timeout=10.0, contract_override=None):
     return connect_contracts(net, timeout, contract_override).single
 
 
+def compatibility_result(clients, policy):
+    """Check that the contract speaks the interface this tool was written for.
+
+    The contract publishes ``compatibility_level()``; it is read through every
+    connected endpoint, so a mismatch cannot be hidden by one of them. A
+    contract that does not expose the view at all predates the versioning and is
+    reported as such.
+    """
+    level = policy.level("compatibility")
+    try:
+        seen = int(clients_of(clients).call("compatibility_level"))
+    except (ProviderUnavailable, ProviderDisagreement) as exc:
+        detail = (f"cannot read compatibility_level() from the configured contract ({exc}); "
+                  f"it either predates the contract versioning or an endpoint cannot "
+                  f"answer, while this tool implements level {CONTRACT_COMPATIBILITY}")
+    else:
+        if seen == CONTRACT_COMPATIBILITY:
+            return Result("compatibility", OK, f"contract compatibility level {seen}")
+        detail = (f"contract has compatibility level {seen}, but this tool only implements "
+                   f"level {CONTRACT_COMPATIBILITY}")
+        detail += "; update the tool" if seen > CONTRACT_COMPATIBILITY else "; the contract has to be redeployed"
+
+    if level == "ignore":
+        return Result("compatibility", OK, f"{detail} (check ignored)")
+    return Result("compatibility", level, detail)
+
+
 # ---------------------------------------------------------------------------
 # checks
 # ---------------------------------------------------------------------------
@@ -854,10 +893,16 @@ def verify_repomd(repomd_path, policy, conf, fsig_path=None, timeout=10.0, contr
         return [Result("rpc_error", level, f"chain not reachable for network "
                                            f"{net.get('network')!r}: {exc}")]
 
+    compatibility = compatibility_result(contract, policy)
+    if compatibility.level != OK:
+        # reading product data of an unknown layout would only produce nonsense
+        return [compatibility]
+
     try:
-        return verify_build(verification, contract, policy, fsig_path)
+        results = verify_build(verification, contract, policy, fsig_path)
     except Exception as exc:
         return [Result("rpc_error", policy.level("rpc_error"), f"on-chain lookup failed: {exc}")]
+    return results + [compatibility]
 
 
 def verify_oci(reference, policy, conf, timeout=10.0, contract_override=None, raw_reader=None):
@@ -881,6 +926,10 @@ def verify_oci(reference, policy, conf, timeout=10.0, contract_override=None, ra
         return digest, [Result("rpc_error", level, f"chain not reachable for network "
                                                     f"{net.get('network')!r}: {exc}")]
 
+    compatibility = compatibility_result(contract, policy)
+    if compatibility.level != OK:
+        return digest, [compatibility]
+
     try:
         results = verify_build(
             digest,
@@ -891,4 +940,4 @@ def verify_oci(reference, policy, conf, timeout=10.0, contract_override=None, ra
         )
     except Exception as exc:
         return digest, [Result("rpc_error", policy.level("rpc_error"), f"on-chain lookup failed: {exc}")]
-    return digest, results
+    return digest, results + [compatibility]

@@ -48,9 +48,10 @@ SHIPPED_CONF = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 
 class FakeFunction:
-    def __init__(self, value, exc=None):
+    def __init__(self, value, exc=None, name=""):
         self.value = value
         self.exc = exc
+        self.name = name
         self.calls = []
 
     def call(self, *args, **kwargs):
@@ -62,26 +63,30 @@ class FakeFunction:
 
 class FakeContract:
     """Minimal stand-in for a web3 contract with the read-only views we use."""
-
-    def __init__(self, build=(0, 0, 0), product=("", "", metadata.SECURITY_LEVELS["not_set"]), current="", exc=None):
+    def __init__(self, build=(0, 0, 0), product=("", "", metadata.SECURITY_LEVELS["not_set"]),
+                 current="", exc=None, level=metadata.CONTRACT_COMPATIBILITY):
         self._build = build
         self._product = product
         self._current = current
         self._exc = exc
+        self._level = level
         self.seen = []
 
     @property
     def functions(self):
         return self
 
+    def compatibility_level(self):
+        return self._record(FakeFunction(self._level, self._exc, "compatibility_level"))
+
     def get_product_build(self, verification):
-        return self._record(FakeFunction(self._build, self._exc))
+        return self._record(FakeFunction(self._build, self._exc, "get_product_build"))
 
     def get_product(self, product_id):
-        return self._record(FakeFunction(self._product, self._exc))
+        return self._record(FakeFunction(self._product, self._exc, "get_product"))
 
     def current_product_build(self, name, kind):
-        return self._record(FakeFunction(self._current, self._exc))
+        return self._record(FakeFunction(self._current, self._exc, "current_product_build"))
 
     def _record(self, function):
         self.seen.append(function)
@@ -97,6 +102,14 @@ def endpoints(*contracts, block=4711):
         chain_id=560048,
         pin=len(contracts) > 1,
     )
+
+
+def tempfile_path(text):
+    """Write text to a temporary file and return its path."""
+    fd, path = tempfile.mkstemp(suffix=".xml")
+    with os.fdopen(fd, "w") as handle:
+        handle.write(text)
+    return path
 
 
 def make_policy(**overrides):
@@ -204,6 +217,7 @@ class ShippedConfTest(unittest.TestCase):
         self.assertEqual(policy.level("unmanaged"), "allow")
         self.assertEqual(policy.level("registered"), metadata.REJECT)
         self.assertEqual(policy.level("critical_issues"), metadata.REJECT)
+        self.assertEqual(policy.level("compatibility"), metadata.REJECT)
         self.assertEqual(policy.level("rpc_error"), metadata.REJECT)
         self.assertEqual(policy.level("consensus"), metadata.REJECT)
         self.assertEqual(policy.level("current_build"), metadata.WARN)
@@ -357,6 +371,86 @@ class VerifyRepomdTest(unittest.TestCase):
         with mock.patch.object(metadata, "connect_provider", side_effect=ConnectionError("down")):
             results = metadata.verify_repomd(self._write(REPOMD), make_policy(network="hoodi", rpc_error="ignore"), conf)
         self.assertEqual(metadata.worst(results), metadata.OK)
+
+
+class CompatibilityTest(unittest.TestCase):
+    """The contract has to speak the interface level this tool implements."""
+
+    def _conf(self):
+        return {"hoodi": {"http_provider": "http://localhost:8545", "chainid": "560048",
+                          "contract": "0x02724c2d1e76Ea3A24247A48F959532cDb152Fb6"}}
+
+    def test_matching_level_is_reported_as_ok(self):
+        results = metadata.compatibility_result(endpoints(registered_contract()), make_policy())
+        self.assertEqual(results.level, metadata.OK)
+        self.assertIn(str(metadata.CONTRACT_COMPATIBILITY), results.message)
+
+    def test_newer_contract_needs_a_newer_tool(self):
+        contract = registered_contract()
+        contract._level = metadata.CONTRACT_COMPATIBILITY + 1
+        results = metadata.compatibility_result(endpoints(contract), make_policy())
+        self.assertEqual(results.level, metadata.REJECT)
+        self.assertIn("update the tool", results.message)
+
+    def test_older_contract_is_rejected(self):
+        contract = registered_contract()
+        contract._level = metadata.CONTRACT_COMPATIBILITY - 1
+        results = metadata.compatibility_result(endpoints(contract), make_policy())
+        self.assertEqual(results.level, metadata.REJECT)
+        self.assertIn("redeploy", results.message)
+
+    def test_contract_without_the_view_is_rejected(self):
+        results = metadata.compatibility_result(endpoints(FakeContract(exc=ValueError("execution reverted"))),
+                                                make_policy())
+        self.assertEqual(results.level, metadata.REJECT)
+        self.assertIn("cannot read compatibility_level()", results.message)
+
+    def test_disagreeing_endpoints_are_rejected(self):
+        current, older = registered_contract(), registered_contract()
+        older._level = metadata.CONTRACT_COMPATIBILITY + 1
+        results = metadata.compatibility_result(endpoints(current, older), make_policy())
+        self.assertEqual(results.level, metadata.REJECT)
+        self.assertIn("disagree", results.message)
+
+    def test_level_is_configurable(self):
+        contract = registered_contract()
+        contract._level = metadata.CONTRACT_COMPATIBILITY + 1
+        results = metadata.compatibility_result(endpoints(contract), make_policy(compatibility="warn"))
+        self.assertEqual(results.level, metadata.WARN)
+
+    def test_check_is_ignored_on_demand(self):
+        contract = registered_contract()
+        contract._level = metadata.CONTRACT_COMPATIBILITY + 1
+        results = metadata.compatibility_result(endpoints(contract), make_policy(compatibility="ignore"))
+        self.assertEqual(results.level, metadata.OK)
+
+    def test_verify_repomd_stops_before_reading_an_unknown_layout(self):
+        contract = registered_contract()
+        contract._level = metadata.CONTRACT_COMPATIBILITY + 1
+        path = tempfile_path(REPOMD)
+        self.addCleanup(os.unlink, path)
+        with mock.patch.object(metadata, "connect_contracts", return_value=endpoints(contract)):
+            results = metadata.verify_repomd(path, make_policy(network="hoodi"), self._conf())
+        self.assertEqual(metadata.worst(results), metadata.REJECT)
+        self.assertEqual(level_of(results, "compatibility"), metadata.REJECT)
+        self.assertEqual(level_of(results, "product"), None)
+        # only the level itself was read, no product data of the unknown layout
+        self.assertEqual([call.name for call in contract.seen], ["compatibility_level"])
+
+    def test_verify_oci_reports_the_mismatch_with_the_digest(self):
+        contract = FakeContract(
+            build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
+            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
+            current=VerifyOciTest.DIGEST,
+            level=metadata.CONTRACT_COMPATIBILITY + 1,
+        )
+        with mock.patch.object(metadata, "connect_contracts", return_value=endpoints(contract)):
+            digest, results = metadata.verify_oci(
+                "registry.opensuse.org/opensuse/leap:latest", make_policy(network="hoodi"), self._conf(),
+                raw_reader=lambda ref: VerifyOciTest.RAW)
+        self.assertEqual(digest, VerifyOciTest.DIGEST)
+        self.assertEqual(metadata.worst(results), metadata.REJECT)
+        self.assertEqual(level_of(results, "compatibility"), metadata.REJECT)
 
 
 class RepoverifyMainTest(unittest.TestCase):

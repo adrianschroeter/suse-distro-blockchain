@@ -412,6 +412,55 @@ class RegisterCliTest(unittest.TestCase):
         self.assertTrue(args.dry_run)
 
 
+class ContractCompatibilityTest(unittest.TestCase):
+    """distro_tool refuses a contract whose interface it does not implement."""
+
+    ADDRESS = "0x02724c2d1e76Ea3A24247A48F959532cDb152Fb6"
+
+    def _contract(self, value=None, error=None):
+        contract = mock.Mock()
+        level = mock.Mock()
+        if error is not None:
+            level.call.side_effect = error
+        else:
+            level.call.return_value = value
+        contract.functions.compatibility_level.return_value = level
+        return contract
+
+    def test_matching_level_is_accepted(self):
+        contract = self._contract(distro_tool.COMPATIBILITY_LEVEL)
+        self.assertIs(distro_tool.check_compatibility(contract, self.ADDRESS), contract)
+
+    def test_newer_contract_asks_for_a_newer_tool(self):
+        with self.assertRaises(SystemExit) as raised:
+            distro_tool.check_compatibility(self._contract(distro_tool.COMPATIBILITY_LEVEL + 1), self.ADDRESS)
+        self.assertIn("Update distro_tool", str(raised.exception))
+
+    def test_older_contract_asks_for_a_redeploy(self):
+        with self.assertRaises(SystemExit) as raised:
+            distro_tool.check_compatibility(self._contract(distro_tool.COMPATIBILITY_LEVEL - 1), self.ADDRESS)
+        self.assertIn("Redeploy", str(raised.exception))
+
+    def test_contract_without_the_view_asks_for_a_redeploy(self):
+        with self.assertRaises(SystemExit) as raised:
+            distro_tool.check_compatibility(
+                self._contract(error=ValueError("execution reverted")), self.ADDRESS)
+        message = str(raised.exception)
+        self.assertIn("does not provide compatibility_level()", message)
+        self.assertIn("Redeploy", message)
+
+    def test_get_contract_addr_checks_the_level(self):
+        w3 = mock.Mock()
+        w3.eth.contract.return_value = self._contract(distro_tool.COMPATIBILITY_LEVEL)
+        with mock.patch.object(distro_tool.Web3, "is_address", return_value=True), \
+             mock.patch.object(distro_tool.Web3, "to_checksum_address", return_value=self.ADDRESS), \
+             mock.patch.dict(distro_tool.os.environ, {}, clear=True):
+            args = mock.Mock(contract=self.ADDRESS, network="hoodi", conf="/dev/null")
+            contract = distro_tool.get_contract_addr(w3, args)
+        w3.eth.contract.assert_called_once_with(address=self.ADDRESS, abi=distro_tool.CONTRACT_ABI)
+        self.assertIs(contract, w3.eth.contract.return_value)
+
+
 class SetSecurityLevelCliTest(unittest.TestCase):
     def test_set_security_level_subcommand(self):
         args = distro_tool.build_parser().parse_args(["set-security-level", "3", "important"])

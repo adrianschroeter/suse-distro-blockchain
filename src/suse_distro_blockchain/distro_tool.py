@@ -40,6 +40,9 @@ except ImportError:
 
 BUILD_KINDS = {"rpmmd": 1, "product": 2, "oci_container": 4}
 ATTESTATION_NAMES = {0: "none", 1: "outstanding", 2: "approved", 4: "rejected"}
+# interface level of the contract this tool was written for; the contract
+# publishes its own compatibility_level() and is rejected when it differs
+COMPATIBILITY_LEVEL = 1
 # severity of the security issues known for a product, set by the security team
 # via set_security_level(); the values are the vyper flag encoding
 SECURITY_LEVELS = {"not_set": 1, "low": 2, "moderate": 4, "important": 8, "critical": 16}
@@ -472,6 +475,37 @@ def connect_web3(args):
     return w3, None
 
 
+def check_compatibility(contract, address):
+    """Refuse a contract whose interface this tool does not implement.
+
+    A contract published before the compatibility_level view existed does not
+    have the getter at all, so a failing call means "too old" here. Reading its
+    product data would misinterpret the storage layout (e.g. a boolean security
+    flag read as a level), therefore this is a hard error.
+    """
+    try:
+        seen = int(contract.functions.compatibility_level().call())
+    except Exception:
+        sys.exit(
+            f"Contract {address} does not provide compatibility_level(); it predates "
+            f"the contract versioning this tool requires (level {COMPATIBILITY_LEVEL}).\n"
+            "  Redeploy ape/contracts/distro.vy and point --contract at the new address."
+        )
+    if seen != COMPATIBILITY_LEVEL:
+        if seen > COMPATIBILITY_LEVEL:
+            sys.exit(
+                f"Contract {address} has compatibility level {seen}, but this tool only "
+                f"implements level {COMPATIBILITY_LEVEL}.\n"
+                "  Update distro_tool, or point --contract at an older contract."
+            )
+        sys.exit(
+            f"Contract {address} has compatibility level {seen}, this tool requires "
+            f"level {COMPATIBILITY_LEVEL}.\n"
+            "  Redeploy ape/contracts/distro.vy and point --contract at the new address."
+        )
+    return contract
+
+
 def get_contract_addr(w3, args):
     addr = args.contract or os.environ.get("CONTRACT_ADDRESS")
     if not addr:
@@ -481,7 +515,8 @@ def get_contract_addr(w3, args):
         sys.exit("No contract address (use --contract / CONTRACT_ADDRESS / conf).")
     if not Web3.is_address(addr):
         sys.exit(f"Invalid address: {addr}")
-    return w3.eth.contract(address=Web3.to_checksum_address(addr), abi=CONTRACT_ABI)
+    address = Web3.to_checksum_address(addr)
+    return check_compatibility(w3.eth.contract(address=address, abi=CONTRACT_ABI), address)
 
 
 def send_tx(w3, acct, fn_obj, gas=None):

@@ -232,6 +232,29 @@ vyper -f abi contracts/distro.vy  > .build/distro.json
 python3 tests/test_distro_contract.py
 ```
 
+## Contract versioning
+
+`compatibility_level` in `ape/contracts/distro.vy` is the interface level of the
+contract. Bump it whenever a change breaks the ABI or the storage layout, for
+example when the boolean security flag became the `SecurityLevel` flag. The
+clients refuse a contract whose level does not match what they implement:
+
+- `CONTRACT_COMPATIBILITY` in `src/suse_distro_blockchain/metadata.py` for
+  `suse-distro-check`, `repoverify` and `suse-distro-oci-check`
+  (config key `compatibility`, `reject` by default),
+- `COMPATIBILITY_LEVEL` in `src/suse_distro_blockchain/distro_tool.py`, which
+  aborts with a hint to update the tool or to redeploy the contract.
+
+A contract published before this constant existed has no such view, so old
+deployments (e.g. the address in `suse-distro-check.conf`) are reported as
+incompatible instead of being read with the wrong assumptions. Bump the
+constants in both clients together with the contract, and regenerate the
+packaged artifact:
+
+```bash
+make contract-build
+```
+
 ## Running the unit tests
 
 All unit tests live in `tests/` and import the package from `src/`:
