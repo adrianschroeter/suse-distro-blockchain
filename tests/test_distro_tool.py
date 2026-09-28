@@ -832,5 +832,32 @@ class AddBuildPrecheckTest(unittest.TestCase):
         send.assert_called_once()
 
 
+class ResolveNetworkTest(unittest.TestCase):
+    """Without --network the [main] section of the conf decides the network."""
+
+    def _resolve(self, network, main_section):
+        args = mock.Mock(network=network, conf="/etc/suse-distro-check.conf")
+        with mock.patch.object(distro_tool, "load_conf", return_value=main_section):
+            return distro_tool.resolve_network_name(args)
+
+    def test_an_explicit_network_wins_over_main(self):
+        self.assertEqual(
+            self._resolve("hoodi", {"main": {"network": "arbitrum-sepolia"}}), "hoodi")
+
+    def test_a_missing_network_uses_main(self):
+        self.assertEqual(
+            self._resolve(None, {"main": {"network": "arbitrum-sepolia"}}),
+            "arbitrum-sepolia")
+
+    def test_main_without_network_falls_back_to_sepolia(self):
+        self.assertEqual(self._resolve(None, {"main": {}}), "sepolia")
+
+    def test_no_conf_falls_back_to_sepolia(self):
+        self.assertEqual(self._resolve(None, {}), "sepolia")
+
+    def test_the_parser_no_long_hardcodes_a_default(self):
+        self.assertIsNone(distro_tool.build_parser().parse_args(["roles"]).network)
+
+
 if __name__ == "__main__":
     unittest.main()

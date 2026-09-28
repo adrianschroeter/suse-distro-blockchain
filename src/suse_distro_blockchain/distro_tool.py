@@ -446,6 +446,19 @@ def get_signer(w3, args):
     return acct
 
 
+def resolve_network_name(args):
+    """The network section to use: --network, else [main] network, else 'sepolia'.
+
+    Without --network the section named by [main] in the conf is used, so the
+    same file the verification tools read also drives the tool; --contract then
+    falls back to the contract of that section. A missing [main] keeps the
+    historical default, 'sepolia'."""
+    if args.network:
+        return args.network
+    default = str(load_conf(args.conf).get("main", {}).get("network", "")).strip()
+    return default or "sepolia"
+
+
 def connect_web3(args):
     global _TESTER
     if args.network == "tester":
@@ -1027,11 +1040,13 @@ def build_parser():
         prog="distro_tool",
         description="openSUSE distro attestation contract CLI.",
     )
-    p.add_argument("--network", default="sepolia")
+    p.add_argument("--network", default=None,
+                   help="network section of the conf (default: [main] network, else sepolia)")
     p.add_argument("--conf", default=CONF_PATH)
     p.add_argument("--provider")
     p.add_argument("--chain-id", type=int)
-    p.add_argument("--contract")
+    p.add_argument("--contract",
+                   help="contract address (default: the contract of the network section)")
     p.add_argument("--key-file", help="file with hex private key")
     p.add_argument("--gas", type=int)
     p.add_argument("-y", "--yes", action="store_true")
@@ -1113,6 +1128,7 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     check_artifacts_current()
+    args.network = resolve_network_name(args)
     w3, tester = connect_web3(args)
 
     if args.command == "deploy":
