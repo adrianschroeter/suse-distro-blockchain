@@ -21,7 +21,7 @@ pipx install web3 eth-account
 make contract-build
 
 # 3. (defaults) network presets are read from suse-distro-check.conf:
-#    hoodi, sepolia, mainnet, anvil
+#    hoodi, sepolia, arbitrum-sepolia, mainnet, anvil
 ```
 
 Each write operation prints the transaction hash, gas used and a
@@ -32,7 +32,7 @@ Each write operation prints the transaction hash, gas used and a
 
 | option | meaning |
 | --- | --- |
-| `--network <name>` | preset from `suse-distro-check.conf`; default `sepolia`. Example conf networks: `hoodi`, `sepolia`, `mainnet`, `anvil` |
+| `--network <name>` | preset from `suse-distro-check.conf`; default `sepolia`. Example conf networks: `hoodi`, `sepolia`, `arbitrum-sepolia`, `mainnet`, `anvil` |
 | `--provider <url>` | override the RPC provider (`distro_tool` uses the first configured endpoint) |
 | `--chain-id <id>` | expect this chain id, abort otherwise |
 | `--contract <addr>` | contract address override |
@@ -69,6 +69,109 @@ distro_tool --network hoodi --contract 0xADDRESS roles
 Limitations: Everybody can deploy a contract, but the contract address is
 unique for each deployment. Verification of a product will only happen via
 an agreed conctract address.
+
+### Example: Arbitrum Sepolia
+
+The contract is plain EVM and the tool only needs an endpoint, a chain id and
+an address, so a rollup is set up like any other network. `suse-distro-check.conf`
+already ships a prepared section:
+
+```ini
+[arbitrum-sepolia]
+http_provider=https://sepolia-rollup.arbitrum.io/rpc,https://arbitrum-sepolia-rpc.publicnode.com
+chainid=421614
+contract=
+```
+
+Get test ETH from the Arbitrum faucet (<https://portal.arbitrum.io>), then
+deploy. An explicit `--gas` is normally not needed: a Nitro node's
+`eth_estimateGas` already covers the L1 and L2 parts of the fee.
+
+```bash
+# 1. deploy; the deploying account becomes the foundation_owner
+distro_tool --network arbitrum-sepolia --key-file key.txt \
+    deploy \
+    --builder   0xADDRESS_PRODUCT_BUILDER \
+    --validator 0xADDRESS_OFFICIAL_VALIDATOR \
+    --security  0xADDRESS_SECURITY_TEAM
+# -> deployed: 0x...
+
+# 2. pin the address in the conf section, then check the roles
+distro_tool --network arbitrum-sepolia roles
+```
+
+The L1 part of the fee is priced from the parent chain calldata price and
+fluctuates, so a limit estimated at signing time can be too low by the time the
+transaction is posted; the node then rejects it with `intrinsic gas too low`.
+Retry such a transaction with an explicit, generously sized `--gas` value. The
+same applies to every write command (`add-product`, `add-build`, `approve`,
+`reject`, `set-security-level`); reads need nothing special. Verification of a
+repository then works like on any other network:
+
+```bash
+# one repository enforced against Arbitrum Sepolia
+[repo:repo-oss]
+network = arbitrum-sepolia
+```
+
+If the signing account holds no balance, the tool stops with a plain error
+instead of a web3 traceback:
+
+```
+Deploying the contract failed: insufficient funds for gas * price + value: have 0 want 1950624946997360 (RPC error -32003)
+  from     : 0xADDRESS_SIGNING_ACCOUNT
+  0xADDRESS_SIGNING_ACCOUNT does not hold enough balance to pay for this transaction.
+  Fund the signing account on this network first; on Arbitrum Sepolia
+  use the faucet (https://portal.arbitrum.io), on Hoodi the
+  https://faucet.hoodi.ethpandaops.io faucet.
+```
+
+### Example: Arbitrum One (main network)
+
+Same contract, same tooling, chain id `42161`. `suse-distro-check.conf` ships a
+prepared section with two public endpoints:
+
+```ini
+[arbitrum]
+http_provider=https://arb1.arbitrum.io/rpc,https://arbitrum-one-rpc.publicnode.com
+chainid=42161
+contract=
+```
+
+Put your own Nitro full node first for production; every listed endpoint has to
+be reachable and has to agree with the others, so a node you operate is the one
+you can trust. Gas is paid in ETH and there is no faucet, so the signing account
+needs real ETH before the first write command.
+
+```bash
+# 1. deploy; the deploying account becomes the foundation_owner
+distro_tool --network arbitrum --key-file key.txt \
+    deploy \
+    --builder   0xADDRESS_PRODUCT_BUILDER \
+    --validator 0xADDRESS_OFFICIAL_VALIDATOR \
+    --security  0xADDRESS_SECURITY_TEAM
+# -> deployed: 0x...
+
+# 2. pin the address in the conf section, then check the roles
+distro_tool --network arbitrum roles
+```
+
+Enforcement of a repository against Arbitrum One is the same one-liner:
+
+```bash
+[repo:repo-oss]
+network = arbitrum
+```
+
+Watch the chain id: `arbitrum` is 42161, `arbitrum-sepolia` is 421614, and
+`distro_tool` aborts on a mismatch instead of sending the transaction to the
+wrong chain.
+
+The rest of this document uses `hoodi` in its examples; substitute
+`--network arbitrum-sepolia` and the pinned address to follow them on the
+rollup. The chain id is checked in both directions: `distro_tool` aborts on a
+mismatch and the verification front ends require every configured endpoint to
+agree on it.
 
 One contract can support multiple products, but each product could also use
 an own contract.
@@ -178,40 +281,54 @@ Check the attestation state of a build:
 distro_tool --network hoodi --contract 0xADDRESS build <verification>
 ```
 
-## 4. Set the security level of a product
+## 4. Report the security level of a build
 
 Limitations: This only works for the registered security account in the contract.
 
-The `security_team` records the severity of the security issues known for a
-product. `not_set` means nothing is reported, and the levels grow with severity:
+The `security_team` records the severity of the security issues of a build. The
+level is reported **for one build** and applies to that build *and to every build
+of the same product that was registered before it*; builds registered afterwards
+start at `not_set` again. `not_set` means nothing is reported, and the levels
+grow with severity:
 
 | level | meaning |
 | --- | --- |
-| `not_set` | no known issues (the value a new product starts with) |
+| `not_set` | no known issues (the value every build starts with) |
 | `low` | minor issues, no workaround needed |
 | `moderate` | issues with a workaround available |
 | `important` | serious issues, update strongly recommended |
 | `critical` | exploitable issues, the build must not be used |
 
-Set, lower or clear the level:
+Report, lower or withdraw the level, always naming the build the report is
+about (its digest, as returned by `add-build`):
 
 ```bash
 distro_tool --network hoodi --contract 0xADDRESS \
-    set-security-level 1 critical
+    set-security-level <verification> critical
 distro_tool --network hoodi --contract 0xADDRESS \
-    set-security-level 1 not_set
+    set-security-level <verification> not_set
 ```
 
-`<product_id>` is the numeric product id returned by `add-product`. The
-verification tools always report the level (see
+With builds registered as A, B, C, D and reports `critical` for B and `low` for
+C, the levels in effect are A: critical, B: critical, C: low, D: `not_set`.
+Withdrawing the report of a build (`not_set`) leaves that build clean and keeps
+the other reports untouched. A product keeps 256 reports; re-reporting a build
+that is already reported updates it and needs no new slot.
+
+The verification tools always report the level of the build they check (see
 [`max_critical_issues`](#per-repository-policy)), so a level above the tolerated
 maximum makes the repository or image fail.
 
-Inspect the level:
+Inspect the reports of a product, and the level in effect for a build:
 
 ```bash
 distro_tool --network hoodi --contract 0xADDRESS showid 1
-# security: critical
+# security: 2 of 256 reports used
+#   <verification-B>  critical  (applies to this and all older builds)
+#   <verification-C>  low  (applies to this and all older builds)
+
+distro_tool --network hoodi --contract 0xADDRESS build <verification-C>
+# security    : low
 ```
 
 ## 5. Verify a repository (suse-distro-check + repoverification plugin)
@@ -243,7 +360,7 @@ is looked up on-chain via `get_product_build`, and the following is reported:
 | `rpc_error` | an RPC endpoint was unreachable (config key `rpc_error`) |
 | `product` | product name / git_ref / build kind |
 | `kind` | on-chain build kind is `rpmmd` |
-| `security_level` | severity of the known security issues of the product, set on-chain by the security team (config keys `max_critical_issues` and `critical_issues`) |
+| `security_level` | severity in effect for this build, as reported on-chain by the security team (config keys `max_critical_issues` and `critical_issues`) |
 | `verification` | rebuild reproducibility: `outstanding` / `approved` / `rejected` (config key `min_attestation`) |
 | `current_build` | this digest is the current build for the product |
 
