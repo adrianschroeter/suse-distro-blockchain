@@ -161,12 +161,6 @@ def is_hex(s):
     return all(c in "0123456789abcdefABCDEF" for c in s)
 
 
-def validate_git_ref(r):
-    if not is_hex(r) or len(r) not in (40, 64):
-        sys.exit("git_ref must be hex sha1 (40) or sha256 (64).")
-    return r
-
-
 MAX_VERIFICATION_LEN = 128  # fits sha512 (128 hex chars)
 
 # OCI image manifest digest, e.g. sha256:<64 hex>
@@ -867,7 +861,7 @@ def do_add_product(w3, c, args):
     name = args.name
     if not (0 < len(name) <= 16):
         sys.exit("name must be 1-16 chars.")
-    git_ref = validate_git_ref(args.git_ref)
+    git_ref = validate_product_ref(args.git_ref)
     if not prompt(args, f"add_product(name={name!r}, git_ref={git_ref})"):
         sys.exit("aborted")
     acct = get_signer(w3, args)
@@ -875,7 +869,7 @@ def do_add_product(w3, c, args):
 
 
 def do_add_build(w3, c, args):
-    git_ref = validate_git_ref(args.git_ref)
+    git_ref = validate_product_ref(args.git_ref)
     kind = parse_kind(args.kind)
     if kind == BUILD_KINDS["oci_container"]:
         ver = validate_oci_verification(args.verification)
@@ -989,11 +983,17 @@ def build_parser():
 
     s = sub.add_parser("add-product")
     s.add_argument("name")
-    s.add_argument("git_ref")
+    s.add_argument(
+        "git_ref",
+        help="the product anchor, hex md5 (32), sha1 (40) or sha256 (64)",
+    )
     s.set_defaults(func=do_add_product)
 
     s = sub.add_parser("add-build")
-    s.add_argument("git_ref")
+    s.add_argument(
+        "git_ref",
+        help="the product anchor, hex md5 (32), sha1 (40) or sha256 (64)",
+    )
     s.add_argument("kind", help="rpmmd|product|oci_container or 1|2|4")
     s.add_argument(
         "verification",

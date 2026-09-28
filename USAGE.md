@@ -186,7 +186,7 @@ Registering has two steps: create the product, then attach a build to it.
 # 2a. create the product (product_creator role)
 export PRIVATE_KEY=0x...
 distro_tool --network hoodi --contract 0xADDRESS \
-    add-product Leap-16.1 <git: 40-char sha1 or 64-char sha256>
+    add-product Leap-16.1 <git: 32-char md5, 40-char sha1 or 64-char sha256>
 
 # 2b. attach a build to the product (product_creator role)
 distro_tool --network hoodi --contract 0xADDRESS \
@@ -198,7 +198,7 @@ Arguments:
 | argument | accepted values |
 | --- | --- |
 | `name` | 1-16 characters |
-| `git_ref` | hex git commit, 40 (sha1) or 64 (sha256) chars, must match the contract's git_ref |
+| `git_ref` | product anchor, hex md5 (32), sha1 (40) or sha256 (64) chars, must match the contract's git_ref. This is the same value `register` derives from the SBOM: the fragment of the root package's `vcs` reference, otherwise the md5 in its `obs-disturl` locator |
 | `kind` | `rpmmd` (1), `product` (2) or `oci_container` (4) |
 | `verification` | hex digest of the build artifacts, 1-128 chars. **SHA-512 is supported**: a sha512 digest is 128 hex chars (sha256 is 64). The same value references this build in every later attestation call. For `oci_container` this is the image manifest digest including the `sha256:` prefix (a bare 64-hex digest is auto-prefixed; see section 6) |
 
