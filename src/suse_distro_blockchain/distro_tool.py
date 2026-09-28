@@ -845,6 +845,65 @@ def do_current(w3, c, args):
 
 # -- write commands -----------------------------------------------------------
 
+# The contract checks its caller's role before it acts, and reverts with no
+# reason data when an assert fails, so estimate_gas cannot say *which* check
+# stopped the transaction. These helpers run the same checks read-only first and
+# name the failing one, turning a bare "transaction would revert" into an answer.
+
+def _require_any_role(c, acct, *roles):
+    """Exit unless acct holds one of the given roles (see do_roles for the list).
+
+    A missing key is reported later by send_tx; here we only judge an address we
+    actually hold, so the tester network's auto-funded account works as-is."""
+    if acct is None:
+        return
+    have = acct.address.lower()
+    current = []
+    for name in roles:
+        addr = getattr(c.functions, name)().call()
+        current.append((name, addr))
+        if addr.lower() == have:
+            return
+    sys.exit(
+        "Cannot sign this transaction: the key holds none of the required roles.\n"
+        f"  signer   : {acct.address}\n"
+        f"  required : one of {' / '.join(roles)}\n"
+        + "".join(f"  {name:<19}: {addr}\n" for name, addr in current)
+        + "  Sign with a key that holds one of those roles, or have the\n"
+        "  foundation_owner change the assignment (set_product_creator / etc.)."
+    )
+
+
+def _precheck_add_build(c, acct, git_ref, ver):
+    """Run add_product_build's three asserts read-only, in the order the contract checks them.
+
+    The first that fails is the one the transaction would hit, so the message
+    points at the real cause instead of guessing at a missing role."""
+    _require_any_role(c, acct, "product_creator")
+    build = c.functions.get_product_build(ver).call()
+    if build[0] != 0:
+        kind_name = BUILD_KIND_NAMES.get(build[1], f"unknown ({build[1]})")
+        sys.exit(
+            f"Build {ver} is already registered on chain.\n"
+            f"  product : {build[0]}   kind : {kind_name}\n"
+            "  A verification hash identifies one build and may only be registered\n"
+            "  once, so re-adding this exact hash would change nothing. Other builds\n"
+            "  of the same product carry their own distinct hash and are unaffected."
+        )
+    next_product = c.functions.next_product().call()
+    product_id = None
+    for pid in range(1, next_product):
+        if c.functions.get_product(pid).call()[1] == git_ref:
+            product_id = pid
+            break
+    if product_id is None:
+        sys.exit(
+            f"git_ref {git_ref} does not match any registered product.\n"
+            f"  next_product : {next_product}\n"
+            "  Register the source first with 'add-product <name> <git_ref>'."
+        )
+
+
 def do_deploy(w3, _c, args):
     for lbl, val in [("builder", args.builder), ("validator", args.validator), ("security", args.security)]:
         if not Web3.is_address(val):
@@ -862,9 +921,10 @@ def do_add_product(w3, c, args):
     if not (0 < len(name) <= 16):
         sys.exit("name must be 1-16 chars.")
     git_ref = validate_product_ref(args.git_ref)
+    acct = get_signer(w3, args)
+    _require_any_role(c, acct, "product_creator")
     if not prompt(args, f"add_product(name={name!r}, git_ref={git_ref})"):
         sys.exit("aborted")
-    acct = get_signer(w3, args)
     send_tx(w3, acct, c.functions.add_product(name, git_ref))
 
 
@@ -875,9 +935,10 @@ def do_add_build(w3, c, args):
         ver = validate_oci_verification(args.verification)
     else:
         ver = validate_verification(args.verification)
+    acct = get_signer(w3, args)
+    _precheck_add_build(c, acct, git_ref, ver)
     if not prompt(args, f"add_product_build(ref={git_ref}, kind={kind}, ver={ver})"):
         sys.exit("aborted")
-    acct = get_signer(w3, args)
     send_tx(w3, acct, c.functions.add_product_build(git_ref, kind, ver))
 
 
@@ -903,6 +964,7 @@ def do_register(w3, c, args):
 
     kind = BUILD_KINDS["rpmmd"]
     acct = get_signer(w3, args)
+    _require_any_role(c, acct, "product_creator")
     product_id, collision = _find_product(c, name, git_ref)
     if product_id is not None:
         print(f"product  : {product_id} (already registered)")

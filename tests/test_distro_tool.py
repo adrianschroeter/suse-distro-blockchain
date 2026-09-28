@@ -760,5 +760,77 @@ class ConnectWeb3Test(unittest.TestCase):
         self.assertIn("No provider", str(raised.exception))
 
 
+class AddBuildPrecheckTest(unittest.TestCase):
+    """add-build reports the failing check instead of a bare 'would revert'."""
+
+    CREATOR = "0x46B8f0Ca9AFD515e9E0dBba75287c0d85d522459"
+    OTHER = "0x000000000000000000000000000000000000dEaD"
+    GIT_REF = "32c02093d0936f75935c1c405f17e776"
+    VER = "aa" * 32
+
+    def args(self):
+        return distro_tool.build_parser().parse_args(
+            ["-y", "add-build", self.GIT_REF, "rpmmd", self.VER])
+
+    def acct(self, address):
+        acct = mock.Mock()
+        acct.address = address
+        return acct
+
+    def contract(self, product_creator, registered=False, products=()):
+        c = mock.Mock()
+        c.functions.product_creator.return_value.call.return_value = product_creator
+        c.functions.foundation_owner.return_value.call.return_value = "0x" + "0" * 40
+        c.functions.official_validator.return_value.call.return_value = "0x" + "1" * 40
+        c.functions.security_team.return_value.call.return_value = "0x" + "2" * 40
+        c.functions.next_product.return_value.call.return_value = len(products) + 1
+        build = (1, 1, 1, 0) if registered else (0, 0, 0, 0)
+        c.functions.get_product_build.return_value.call.return_value = build
+        c.functions.get_product.return_value.call.side_effect = products
+        return c
+
+    def drive(self, c, signer):
+        with mock.patch.object(distro_tool, "get_signer", return_value=self.acct(signer)), \
+             mock.patch.object(distro_tool, "send_tx") as send:
+            try:
+                distro_tool.do_add_build(mock.Mock(), c, self.args())
+                raised = None
+            except SystemExit as e:
+                raised = " ".join(str(e).split())
+        return raised, send
+
+    def test_an_already_registered_build_is_named(self):
+        c = self.contract(self.CREATOR, registered=True,
+                          products=[("Leap-16.0", self.GIT_REF)])
+        message, send = self.drive(c, self.CREATOR)
+        self.assertIn("already registered", message)
+        self.assertIn("product : 1", message)
+        self.assertIn("kind : rpmmd", message)
+        send.assert_not_called()
+
+    def test_a_source_without_a_product_is_named(self):
+        c = self.contract(self.CREATOR, registered=False,
+                          products=[("Leap-16.1", "e36b8dcaaf3e3f0b676be182ffdb44dd")])
+        message, send = self.drive(c, self.CREATOR)
+        self.assertIn("does not match any registered product", message)
+        send.assert_not_called()
+
+    def test_a_key_without_the_role_is_named(self):
+        c = self.contract(self.CREATOR, registered=False,
+                          products=[("Leap-16.0", self.GIT_REF)])
+        message, send = self.drive(c, self.OTHER)
+        self.assertIn("none of the required roles", message)
+        self.assertIn(self.OTHER, message)
+        send.assert_not_called()
+
+    def test_a_valid_build_is_sent(self):
+        c = self.contract(self.CREATOR, registered=False,
+                          products=[("Leap-16.0", self.GIT_REF)])
+        message, send = self.drive(c, self.CREATOR)
+        self.assertIsNone(message)
+        c.functions.add_product_build.assert_called_once_with(self.GIT_REF, 1, self.VER)
+        send.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
