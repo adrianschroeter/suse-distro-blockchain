@@ -27,8 +27,8 @@ except ImportError:  # pragma: nocover - direct execution from a source checkout
 
 
 # The command line tool reports every check and keeps the historical exit
-# behaviour: a critical issue, a rejected attestation or a build that is no
-# longer current fail.
+# behaviour: a security level above the tolerated maximum, a rejected attestation
+# or a build that is no longer current fail.
 CLI_POLICY = {
     "unmanaged": "allow",
     "registered": "warn",
@@ -39,6 +39,7 @@ CLI_POLICY = {
     "kind": "warn",
     "signed": "ignore",
     "min_attestation": "outstanding",
+    "max_critical_issues": "not_set",
 }
 
 

@@ -27,6 +27,8 @@ def main():
                    "a2ffcdfd3cdd3e3a55fc5deb96157be4565f4e1c4eb177f7b08075a15e2b70")
     product_name = "example-1"
     build_kind = 1
+    # SecurityLevel flag values; vyper encodes a flag as a bit shift
+    NOT_SET, LOW, MODERATE, IMPORTANT, CRITICAL = 1, 2, 4, 8, 16
 
     # our roles
     foundation_owner = Account.create('KEYSMASH FJAFJKLDSKF7JKFDJ 1530')
@@ -72,9 +74,31 @@ def main():
         raise SystemExit(1)
     print("Product is verified to be current")
 
-    # security team sets the warn flag
+    # a new product starts without any reported security issue
+    if contract.get_product(product_build[0])[2] != NOT_SET:
+        print("A new product does not start at not_set")
+        raise SystemExit(1)
+    print("Security level of a new product is not_set")
+
+    # the security team walks the product through every level
     boa.env.eoa = security_team.address
-    contract.set_critical(product_build[0], True)
+    for level in (LOW, MODERATE, IMPORTANT, CRITICAL):
+        contract.set_security_level(product_build[0], level)
+        if contract.get_product(product_build[0])[2] != level:
+            print(f"Security level is not {level}")
+            raise SystemExit(1)
+    print("Security level can be set to every level")
+
+    # and clears or lowers it again
+    contract.set_security_level(product_build[0], NOT_SET)
+    if contract.get_product(product_build[0])[2] != NOT_SET:
+        print("Security level is not reset to not_set")
+        raise SystemExit(1)
+    contract.set_security_level(product_build[0], LOW)
+    if contract.get_product(product_build[0])[2] != LOW:
+        print("Security level is not low")
+        raise SystemExit(1)
+    print("Security level can be lowered again")
 
     # Validator approves
     boa.env.eoa = validator.address

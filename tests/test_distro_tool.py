@@ -2,6 +2,7 @@
 """Unit tests for the distro_tool argument validation and SPDX SBOM parsing."""
 
 import unittest
+from unittest import mock
 
 from suse_distro_blockchain import distro_tool
 
@@ -114,6 +115,25 @@ def rpm_pkg():
             disturl_ref(url="obs://build.opensuse.org/openSUSE:Backports:SLE-16.1/standard/" + OTHER_MD5 + "-0ad"),
         ],
     }
+
+
+class SecurityLevelTest(unittest.TestCase):
+    def test_names_map_to_the_vyper_flag_values(self):
+        for name, value in (("not_set", 1), ("low", 2), ("moderate", 4),
+                            ("important", 8), ("critical", 16)):
+            self.assertEqual(distro_tool.parse_security_level(name), (value, name))
+
+    def test_values_are_accepted_too(self):
+        self.assertEqual(distro_tool.parse_security_level("8"), (8, "important"))
+        self.assertEqual(distro_tool.parse_security_level("CRITICAL"), (16, "critical"))
+
+    def test_unwritten_slot_is_named(self):
+        self.assertEqual(distro_tool.SECURITY_LEVEL_NAMES[0], "not_set")
+
+    def test_unknown_level_is_rejected(self):
+        for bad in ("severe", "3", ""):
+            with self.assertRaises(SystemExit):
+                distro_tool.parse_security_level(bad)
 
 
 class ValidateVerificationTest(unittest.TestCase):
@@ -390,6 +410,27 @@ class RegisterCliTest(unittest.TestCase):
     def test_register_dry_run(self):
         args = distro_tool.build_parser().parse_args(["register", "sbom.json", "--dry-run"])
         self.assertTrue(args.dry_run)
+
+
+class SetSecurityLevelCliTest(unittest.TestCase):
+    def test_set_security_level_subcommand(self):
+        args = distro_tool.build_parser().parse_args(["set-security-level", "3", "important"])
+        self.assertIs(args.func, distro_tool.do_set_security_level)
+        self.assertEqual(args.product_id, 3)
+        self.assertEqual(args.level, "important")
+
+    def test_the_old_set_critical_command_is_gone(self):
+        with self.assertRaises(SystemExit):
+            distro_tool.build_parser().parse_args(["set-critical", "3", "true"])
+
+    def test_set_security_level_sends_the_flag_value(self):
+        args = distro_tool.build_parser().parse_args(["-y", "set-security-level", "3", "moderate"])
+        contract = mock.Mock()
+        with mock.patch.object(distro_tool, "get_signer", return_value=mock.Mock()), \
+             mock.patch.object(distro_tool, "send_tx") as send:
+            distro_tool.do_set_security_level(mock.Mock(), contract, args)
+        contract.functions.set_security_level.assert_called_once_with(3, 4)
+        self.assertEqual(send.call_count, 1)
 
 
 if __name__ == "__main__":

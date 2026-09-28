@@ -63,7 +63,7 @@ class FakeFunction:
 class FakeContract:
     """Minimal stand-in for a web3 contract with the read-only views we use."""
 
-    def __init__(self, build=(0, 0, 0), product=("", "", False), current="", exc=None):
+    def __init__(self, build=(0, 0, 0), product=("", "", metadata.SECURITY_LEVELS["not_set"]), current="", exc=None):
         self._build = build
         self._product = product
         self._current = current
@@ -106,11 +106,12 @@ def make_policy(**overrides):
     return metadata.Policy("test", values, managed=True)
 
 
-def registered_contract(attestation=metadata.ATTESTATION_APPROVED, critical=False,
+def registered_contract(attestation=metadata.ATTESTATION_APPROVED,
+                        security_level=metadata.SECURITY_LEVELS["not_set"],
                         kind=metadata.BUILD_KINDS["rpmmd"], current=VERIFICATION):
     return FakeContract(
         build=(1, kind, attestation),
-        product=("example-1", GIT_REF, critical),
+        product=("example-1", GIT_REF, security_level),
         current=current,
     )
 
@@ -239,10 +240,47 @@ class VerifyBuildTest(unittest.TestCase):
         self.assertEqual(metadata.worst(results), metadata.REJECT)
         self.assertEqual(level_of(results, "registration"), metadata.REJECT)
 
-    def test_critical_issues_are_reject_by_default(self):
-        contract = registered_contract(critical=True)
+    def test_a_reported_security_level_is_reject_by_default(self):
+        for level in ("low", "moderate", "important", "critical"):
+            contract = registered_contract(security_level=metadata.SECURITY_LEVELS[level])
+            results = metadata.verify_build(VERIFICATION, contract, make_policy())
+            self.assertEqual(level_of(results, "security_level"), metadata.REJECT, level)
+            self.assertIn(level, message_of(results, "security_level"))
+
+    def test_not_set_security_level_is_ok(self):
+        results = metadata.verify_build(VERIFICATION, registered_contract(), make_policy())
+        self.assertEqual(level_of(results, "security_level"), metadata.OK)
+        self.assertIn("no known security issues", message_of(results, "security_level"))
+
+    def test_max_critical_issues_tolerates_lower_levels(self):
+        order = metadata.SECURITY_LEVEL_ORDER
+        for tolerated in order:
+            policy = make_policy(max_critical_issues=tolerated)
+            for level in order:
+                contract = registered_contract(security_level=metadata.SECURITY_LEVELS[level])
+                results = metadata.verify_build(VERIFICATION, contract, policy)
+                expected = (metadata.OK if order.index(level) <= order.index(tolerated)
+                            else metadata.REJECT)
+                self.assertEqual(level_of(results, "security_level"), expected,
+                                 f"{tolerated} / {level}")
+
+    def test_tolerated_level_is_reported_as_such(self):
+        contract = registered_contract(security_level=metadata.SECURITY_LEVELS["moderate"])
+        results = metadata.verify_build(VERIFICATION, contract, make_policy(max_critical_issues="moderate"))
+        self.assertEqual(level_of(results, "security_level"), metadata.OK)
+        self.assertIn("security level is moderate (tolerated up to moderate)",
+                      message_of(results, "security_level"))
+
+    def test_unknown_security_level_warns(self):
+        contract = registered_contract(security_level=32)
         results = metadata.verify_build(VERIFICATION, contract, make_policy())
-        self.assertEqual(level_of(results, "critical_issues"), metadata.REJECT)
+        self.assertEqual(level_of(results, "security_level"), metadata.WARN)
+        self.assertIn("unrecognized security level", message_of(results, "security_level"))
+
+    def test_unwritten_security_level_reads_as_not_set(self):
+        contract = registered_contract(security_level=0)
+        results = metadata.verify_build(VERIFICATION, contract, make_policy())
+        self.assertEqual(level_of(results, "security_level"), metadata.OK)
 
     def test_rejected_attestation_fails_by_default(self):
         contract = registered_contract(attestation=metadata.ATTESTATION_REJECTED)
@@ -277,10 +315,11 @@ class VerifyBuildTest(unittest.TestCase):
         self.assertEqual(level_of(metadata.verify_build(VERIFICATION, contract, make_policy()), "kind"),
                          metadata.WARN)
 
-    def test_ignore_disables_check(self):
-        contract = registered_contract(critical=True)
+    def test_ignore_keeps_the_level_but_never_fails(self):
+        contract = registered_contract(security_level=metadata.SECURITY_LEVELS["critical"])
         results = metadata.verify_build(VERIFICATION, contract, make_policy(critical_issues="ignore"))
-        self.assertIsNone(level_of(results, "critical_issues"))
+        self.assertEqual(level_of(results, "security_level"), metadata.OK)
+        self.assertIn("check ignored", message_of(results, "security_level"))
 
     def test_signed_check(self):
         contract = registered_contract()
@@ -381,7 +420,7 @@ class RepoverifyMainTest(unittest.TestCase):
         # the product, the current build, the security level and the attestation
         self.assertIn("'example-1'", report)
         self.assertIn("repository is the current build", report)
-        self.assertIn("no known critical security issues", report)
+        self.assertIn("no known security issues", report)
         self.assertIn("reproducibility verification is approved", report)
         # registration and kind are only reported when they fail
         self.assertNotIn("] registration: ", report)
@@ -391,7 +430,7 @@ class RepoverifyMainTest(unittest.TestCase):
         conf = self._managed_conf("critical_issues=warn\ncurrent_build=warn\n")
         contract = FakeContract(
             build=(1, metadata.BUILD_KINDS["rpmmd"], metadata.ATTESTATION_APPROVED),
-            product=("example-1", GIT_REF, True),
+            product=("example-1", GIT_REF, metadata.SECURITY_LEVELS["critical"]),
             current="stale",
         )
         out = io.StringIO()
@@ -402,7 +441,7 @@ class RepoverifyMainTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         report = out.getvalue()
         self.assertIn("a different build is current", report)
-        self.assertIn("known critical security issues", report)
+        self.assertIn("security level is critical", report)
 
     def test_repo_endpoint_cross_check_stays_behind_verbose(self):
         conf = self._managed_conf()
@@ -495,7 +534,7 @@ class VerifyOciTest(unittest.TestCase):
     def test_registered_oci_image_passes(self):
         contract = FakeContract(
             build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, False),
+            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
             current=self.DIGEST,
         )
         with mock.patch.object(metadata, "connect_contracts", return_value=endpoints(contract)):
@@ -509,7 +548,7 @@ class VerifyOciTest(unittest.TestCase):
     def test_wrong_kind_warns(self):
         contract = FakeContract(
             build=(1, metadata.BUILD_KINDS["rpmmd"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, False),
+            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
             current=self.DIGEST,
         )
         with mock.patch.object(metadata, "connect_contracts", return_value=endpoints(contract)):
@@ -566,7 +605,7 @@ class OciCheckMainTest(unittest.TestCase):
         digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
         contract = FakeContract(
             build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, False),
+            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
             current=digest,
         )
         out, err = io.StringIO(), io.StringIO()
@@ -587,7 +626,7 @@ class OciCheckMainTest(unittest.TestCase):
         digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
         contract = FakeContract(
             build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, False),
+            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
             current=digest,
         )
         out = io.StringIO()
@@ -602,7 +641,7 @@ class OciCheckMainTest(unittest.TestCase):
         # the product, the current build, the security level and the attestation
         self.assertIn("'opensuse-leap'", report)
         self.assertIn("repository is the current build", report)
-        self.assertIn("no known critical security issues", report)
+        self.assertIn("no known security issues", report)
         self.assertIn("reproducibility verification is approved", report)
         # registration and kind are only reported when they fail
         self.assertNotIn("] registration: ", report)
@@ -612,7 +651,7 @@ class OciCheckMainTest(unittest.TestCase):
         digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
         contract = FakeContract(
             build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, True),
+            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["important"]),
             current="sha256:" + "1" * 64,
         )
         conf = self._conf(
@@ -628,13 +667,13 @@ class OciCheckMainTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         report = out.getvalue()
         self.assertIn("a different build is current", report)
-        self.assertIn("known critical security issues", report)
+        self.assertIn("security level is important", report)
         self.assertNotIn(digest, report)
 
     def test_endpoint_cross_check_stays_behind_verbose(self):
         contract = FakeContract(
             build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_APPROVED),
-            product=("opensuse-leap", GIT_REF, False),
+            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
             current="sha256:" + hashlib.sha256(b"raw").hexdigest(),
         )
         cross_checked = endpoints(contract, contract)
@@ -656,7 +695,7 @@ class OciCheckMainTest(unittest.TestCase):
         digest = "sha256:" + hashlib.sha256(b"raw").hexdigest()
         contract = FakeContract(
             build=(1, metadata.BUILD_KINDS["oci_container"], metadata.ATTESTATION_OUTSTANDING),
-            product=("opensuse-leap", GIT_REF, False),
+            product=("opensuse-leap", GIT_REF, metadata.SECURITY_LEVELS["not_set"]),
             current=digest,
         )
         conf = self._conf(

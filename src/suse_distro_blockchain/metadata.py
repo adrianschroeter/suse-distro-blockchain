@@ -44,6 +44,17 @@ ATTESTATION_NAMES = {
     ATTESTATION_REJECTED: "rejected",
 }
 
+# Severity of the security issues known for a product, set by the security team
+# via set_security_level(). Vyper encodes a flag as a bit shift, so the values
+# are 1, 2, 4, 8, 16 and grow with severity, exactly like BuildKinds above.
+# A never written slot reads as 0, which is not a flag member and therefore
+# also means "nothing reported".
+SECURITY_LEVELS = {"not_set": 1, "low": 2, "moderate": 4, "important": 8, "critical": 16}
+SECURITY_LEVEL_NAMES = {value: name for name, value in SECURITY_LEVELS.items()}
+SECURITY_LEVEL_NAMES[0] = "not_set"
+# severity order, used to compare a level against the tolerated maximum
+SECURITY_LEVEL_ORDER = ("not_set", "low", "moderate", "important", "critical")
+
 MAX_VERIFICATION_LEN = 128  # fits sha512 (128 hex chars)
 DEFAULT_CONF = os.path.join(os.sep, "etc", "suse-distro-check.conf")
 
@@ -56,7 +67,7 @@ DEFAULT_CONF = os.path.join(os.sep, "etc", "suse-distro-check.conf")
 # so are other OK results, e.g. the endpoint cross-check.
 BUILD_STATE_CHECKS = (
     "product",
-    "critical_issues",
+    "security_level",
     "verification",
     "current_build",
 )
@@ -155,6 +166,10 @@ DEFAULT_POLICY = {
     # rejected fails unless the check is disabled with "off", in which case it
     # is downgraded to a warning):
     "min_attestation": "outstanding",
+    # highest security level that is still tolerated: any level above it fails
+    # with the level configured for critical_issues. "not_set" (the default)
+    # means only a product without reported issues is accepted.
+    "max_critical_issues": "not_set",
     # optional per repo network override (section name in the config file):
     "network": "",
 }
@@ -214,6 +229,15 @@ def _merge_policy(values, section, issues, where):
                 issues.append(
                     f"{where}: invalid value '{val}' for 'min_attestation' "
                     f"(using '{values['min_attestation']}')"
+                )
+        elif key == "max_critical_issues":
+            if val.lower() in SECURITY_LEVELS:
+                values["max_critical_issues"] = val.lower()
+            else:
+                issues.append(
+                    f"{where}: invalid value '{val}' for 'max_critical_issues' "
+                    f"(using '{values['max_critical_issues']}'; valid values are "
+                    f"{', '.join(SECURITY_LEVEL_ORDER)})"
                 )
         elif key == "network":
             values["network"] = val
@@ -625,6 +649,49 @@ def read_primary_checksum(repomd_path):
     raise ValueError("no primary checksum found in metadata")
 
 
+def _security_level_result(product_name, level, policy):
+    """Compare the on-chain security level of a product with the tolerated maximum.
+
+    ``level`` is the raw value of ``my_product.security_level``: the vyper flag
+    encoding of SecurityLevel (``not_set``, ``low``, ``moderate``, ``important``,
+    ``critical``), where a never written slot reads as 0 and also means
+    "nothing reported". The level itself is always reported, because it is part
+    of the state of a build; only a level above ``max_critical_issues`` fails,
+    and then with the configured ``critical_issues`` level.
+    """
+    level_name = SECURITY_LEVEL_NAMES.get(int(level), None)
+    if level_name is None:
+        # a value this client does not know, e.g. from a newer contract: report
+        # it, but never accept it silently
+        return Result(
+            "security_level",
+            WARN,
+            f"product {product_name!r} has an unrecognized security level {level}",
+        )
+    tolerated = policy.values["max_critical_issues"]
+    if SECURITY_LEVEL_ORDER.index(level_name) <= SECURITY_LEVEL_ORDER.index(tolerated):
+        if level_name == "not_set":
+            return Result("security_level", OK, "no known security issues")
+        return Result(
+            "security_level",
+            OK,
+            f"security level is {level_name} (tolerated up to {tolerated})",
+        )
+    level = policy.level("critical_issues")
+    if level == "ignore":
+        return Result(
+            "security_level",
+            OK,
+            f"security level is {level_name} (check ignored)",
+        )
+    return Result(
+        "security_level",
+        level,
+        f"product {product_name!r} security level is {level_name}, "
+        f"only up to {tolerated} is tolerated",
+    )
+
+
 def verify_build(verification, contract, policy, fsig_path=None,
                  expected_kind=BUILD_KINDS["rpmmd"], signed_check=True):
     """Run all on-chain/local checks for ``verification``.
@@ -687,7 +754,7 @@ def verify_build(verification, contract, policy, fsig_path=None,
     product, failure = _read("get_product", product_id)
     if failure is not None:
         return results + [failure]
-    name, git_ref, critical = product[0], product[1], product[2]
+    name, git_ref, level = product[0], product[1], product[2]
     kind_name = KIND_NAMES.get(kind, str(kind))
     results.append(Result("product", OK, f"{name!r} (git_ref {git_ref}, {kind_name})"))
 
@@ -723,17 +790,7 @@ def verify_build(verification, contract, policy, fsig_path=None,
                 )
             )
 
-    if policy.level("critical_issues") != "ignore":
-        if critical:
-            results.append(
-                Result(
-                    "critical_issues",
-                    policy.level("critical_issues"),
-                    f"product {name!r} has known critical security issues",
-                )
-            )
-        else:
-            results.append(Result("critical_issues", OK, "no known critical security issues"))
+    results.append(_security_level_result(name, level, policy))
 
     min_attestation = policy.values["min_attestation"]
     att_name = ATTESTATION_NAMES.get(attestation, str(attestation))

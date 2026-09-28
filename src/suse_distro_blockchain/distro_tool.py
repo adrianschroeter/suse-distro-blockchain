@@ -40,6 +40,11 @@ except ImportError:
 
 BUILD_KINDS = {"rpmmd": 1, "product": 2, "oci_container": 4}
 ATTESTATION_NAMES = {0: "none", 1: "outstanding", 2: "approved", 4: "rejected"}
+# severity of the security issues known for a product, set by the security team
+# via set_security_level(); the values are the vyper flag encoding
+SECURITY_LEVELS = {"not_set": 1, "low": 2, "moderate": 4, "important": 8, "critical": 16}
+SECURITY_LEVEL_NAMES = {value: name for name, value in SECURITY_LEVELS.items()}
+SECURITY_LEVEL_NAMES[0] = "not_set"
 
 _TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
 _PKG_CONTRACT_SOURCE = os.path.join(_TOOL_DIR, CONTRACT_SOURCE)
@@ -114,6 +119,27 @@ def parse_kind(v):
     if n not in BUILD_KINDS.values():
         sys.exit(f"Invalid kind {n}. Valid: {sorted(BUILD_KINDS.values())}")
     return n
+
+
+def parse_security_level(v):
+    """Map a security level name (or its on-chain value) to the contract value."""
+    name = v.strip().lower()
+    if name in SECURITY_LEVELS:
+        return SECURITY_LEVELS[name], name
+    try:
+        n = int(name)
+    except ValueError:
+        sys.exit(f"Invalid security level '{v}'. Use one of "
+                 f"{', '.join(SECURITY_LEVELS)} or {sorted(SECURITY_LEVELS.values())}.")
+    if n not in SECURITY_LEVEL_NAMES:
+        sys.exit(f"Invalid security level {n}. Valid: {sorted(SECURITY_LEVEL_NAMES)}")
+    return n, SECURITY_LEVEL_NAMES[n]
+
+
+def security_level_name(v):
+    """argparse type for a security level: validates early, keeps the name."""
+    parse_security_level(v)
+    return v.strip().lower()
 
 
 def is_hex(s):
@@ -529,7 +555,7 @@ def do_showid(w3, c, args):
     print(f"id      : {args.product_id}")
     print(f"name    : {p[0]}")
     print(f"git_ref : {p[1]}")
-    print(f"critical: {p[2]}")
+    print(f"security: {SECURITY_LEVEL_NAMES.get(p[2], f'unknown ({p[2]})')}")
 
 
 def do_build(w3, c, args):
@@ -591,10 +617,11 @@ def do_current(w3, c, args):
         print(f"Build verification : {ver}")
         print()
 
-        if product[2]:
-            print("  Security level     : CRITICAL - known security issues reported")
+        level = SECURITY_LEVEL_NAMES.get(product[2], f"unknown ({product[2]})")
+        if level == "not_set":
+            print("  Security level     : not_set - no known security issues")
         else:
-            print("  Security level     : OK - no known critical security issues")
+            print(f"  Security level     : {level}")
 
         att_state, att_detail = ATTESTATION_TEXT.get(
             build[2], ("invalid", "Unexpected attestation value in contract.")
@@ -702,12 +729,12 @@ def do_reject(w3, c, args):
     send_tx(w3, acct, c.functions.reject_attestation(ver))
 
 
-def do_set_critical(w3, c, args):
-    flag = args.critical.lower() in ("1", "true", "yes", "on")
-    if not prompt(args, f"set_critical(id={args.product_id}, critical={flag})"):
+def do_set_security_level(w3, c, args):
+    value, name = parse_security_level(args.level)
+    if not prompt(args, f"set_security_level(id={args.product_id}, level={name})"):
         sys.exit("aborted")
     acct = get_signer(w3, args)
-    send_tx(w3, acct, c.functions.set_critical(args.product_id, flag))
+    send_tx(w3, acct, c.functions.set_security_level(args.product_id, value))
 
 
 # -- CLI parser ---------------------------------------------------------------
@@ -761,10 +788,12 @@ def build_parser():
     s.add_argument("verification")
     s.set_defaults(func=do_reject)
 
-    s = sub.add_parser("set-critical")
+    s = sub.add_parser("set-security-level",
+                       help="set the security level of a product (security_team role)")
     s.add_argument("product_id", type=int)
-    s.add_argument("critical", help="true/false/1/0")
-    s.set_defaults(func=do_set_critical)
+    s.add_argument("level", type=security_level_name,
+                   help="not_set/low/moderate/important/critical or 1/2/4/8/16")
+    s.set_defaults(func=do_set_security_level)
 
     s = sub.add_parser("roles")
     s.set_defaults(func=do_roles)

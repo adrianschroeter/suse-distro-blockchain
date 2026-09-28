@@ -20,6 +20,18 @@ security_team: public(address)
 # count products to get an ID as identifier
 next_product: public(uint256)
 
+# Severity of the security issues known for a product, set by the security
+# team. not_set is the zero value, i.e. a new product starts without any
+# reported issue, and the levels grow with severity. The contract only stores
+# and reports the level; which levels invalidate a build is decided by the
+# verification policy (max_critical_issues in suse-distro-check.conf).
+flag SecurityLevel:
+    not_set
+    low
+    moderate
+    important
+    critical
+
 # A product entry, each iteration is a new product.
 struct my_product :
     # short name including the branch
@@ -28,8 +40,10 @@ struct my_product :
     # defines the used source hash.
     # no git url here, just the hash
     git_ref: String[64]
-    # some marker to invalidate the build
-    known_critical_issues: bool
+    # severity of the security issues known for this product, as assessed by
+    # the security team. not_set means "nothing reported", every other level
+    # invalidates the build (see the verification policy for the threshold).
+    security_level: SecurityLevel
     # reached_end_of_life: bool
 
 products: HashMap[uint256, my_product]
@@ -87,9 +101,9 @@ event AttestationChanged:
     attestation: Attestation
     verification: String[128]
 
-event CriticalFlagChanged:
+event SecurityLevelChanged:
     product_id: indexed(uint256)
-    critical: bool
+    level: SecurityLevel
 
 # build the current_verification key from a product name and a kind.
 # The kind is encoded as exactly 3 digits, so different
@@ -146,7 +160,7 @@ def add_product(name: String[16], git_ref: String[64]) -> uint256:
     current_product: uint256 = self.next_product
     self.products[current_product].name = name
     self.products[current_product].git_ref = git_ref
-    self.products[current_product].known_critical_issues = False
+    self.products[current_product].security_level = SecurityLevel.not_set
     self.git_ref_index[git_ref] = current_product
     self.next_product += 1
     log ProductAdded(product_id=current_product, name=name, git_ref=git_ref)
@@ -178,7 +192,7 @@ def add_product_build(git_ref: String[64], kind: uint8, verification: String[128
 # Modify registered products
 #
 @external
-def set_critical(product_id: uint256, critical: bool):
+def set_security_level(product_id: uint256, level: SecurityLevel):
     # TEMPORARY superuser override: the foundation_owner may also flag products
     # in addition to the security_team. Remove this override once the role
     # separation between security_team and foundation_owner is proven in production.
@@ -186,8 +200,8 @@ def set_critical(product_id: uint256, critical: bool):
     # only existing products can be flagged
     assert product_id > 0
     assert product_id < self.next_product
-    self.products[product_id].known_critical_issues = critical
-    log CriticalFlagChanged(product_id=product_id, critical=critical)
+    self.products[product_id].security_level = level
+    log SecurityLevelChanged(product_id=product_id, level=level)
 
 
 @external

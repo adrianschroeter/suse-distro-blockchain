@@ -178,27 +178,40 @@ Check the attestation state of a build:
 distro_tool --network hoodi --contract 0xADDRESS build <verification>
 ```
 
-## 4. Set the security critical state
+## 4. Set the security level of a product
 
 Limitations: This only works for the registered security account in the contract.
 
-The `security_team` flags a product as having known critical issues. Set it
-`true` to warn users via the verification UI, `false` to clear it:
+The `security_team` records the severity of the security issues known for a
+product. `not_set` means nothing is reported, and the levels grow with severity:
+
+| level | meaning |
+| --- | --- |
+| `not_set` | no known issues (the value a new product starts with) |
+| `low` | minor issues, no workaround needed |
+| `moderate` | issues with a workaround available |
+| `important` | serious issues, update strongly recommended |
+| `critical` | exploitable issues, the build must not be used |
+
+Set, lower or clear the level:
 
 ```bash
 distro_tool --network hoodi --contract 0xADDRESS \
-    set-critical 1 true
+    set-security-level 1 critical
 distro_tool --network hoodi --contract 0xADDRESS \
-    set-critical 1 false
+    set-security-level 1 not_set
 ```
 
-`<product_id>` is the numeric product id returned by `add-product`.
+`<product_id>` is the numeric product id returned by `add-product`. The
+verification tools always report the level (see
+[`max_critical_issues`](#per-repository-policy)), so a level above the tolerated
+maximum makes the repository or image fail.
 
-Inspect the flag:
+Inspect the level:
 
 ```bash
 distro_tool --network hoodi --contract 0xADDRESS showid 1
-# critical: True / False
+# security: critical
 ```
 
 ## 5. Verify a repository (suse-distro-check + repoverification plugin)
@@ -229,11 +242,11 @@ is looked up on-chain via `get_product_build`, and the following is reported:
 | `rpc_error` | an RPC endpoint was unreachable (config key `rpc_error`) |
 | `product` | product name / git_ref / build kind |
 | `kind` | on-chain build kind is `rpmmd` |
-| `critical_issues` | `known_critical_issues` flag set by the security team |
+| `security_level` | severity of the known security issues of the product, set on-chain by the security team (config keys `max_critical_issues` and `critical_issues`) |
 | `verification` | rebuild reproducibility: `outstanding` / `approved` / `rejected` (config key `min_attestation`) |
 | `current_build` | this digest is the current build for the product |
 
-The state of an accepted build (`product`, `critical_issues`, `verification`,
+The state of an accepted build (`product`, `security_level`, `verification`,
 `current_build`) is **always** reported, by the command line tool as well as by
 the zypp plugin, so every accepted repository states which product, security
 level and attestation it belongs to. The remaining successful checks need `-v`.
@@ -284,6 +297,7 @@ consensus = reject
 current_build = warn
 kind = warn
 min_attestation = outstanding
+max_critical_issues = not_set
 
 [repo:repo-oss]
 network = hoodi
@@ -297,7 +311,11 @@ is `ignore` by default because the on-chain verification does not depend on the
 package signature; set it to `warn` or `reject` to enforce signing as well.
 `min_attestation` is `off`, `outstanding` or `approved`; a rejected attestation
 fails unless the check is disabled with `off`, in which case it is reported as a
-warning. `network` selects the section (endpoints, chain id, contract) for that
+warning. `max_critical_issues` is the highest security level still accepted
+(`not_set`, `low`, `moderate`, `important`, `critical`): the default accepts only
+products without reported issues, raise it to keep using a product with known
+issues up to that level, and the level itself is reported either way.
+`network` selects the section (endpoints, chain id, contract) for that
 repository; without it the `[main] network` section is used.
 
 ## 6. Verify a container image (suse-distro-oci-check + spodman)
@@ -331,9 +349,9 @@ suse-distro-oci-check --print-ref <image>   # print image@sha256:<digest>
 
 A non-zero exit status means the image must not be used. The reported checks
 are the same as for repositories (`registration`, `consensus`, `rpc_error`,
-`product`, `kind`, `critical_issues`, `verification`, `current_build`); `kind`
+`product`, `kind`, `security_level`, `verification`, `current_build`); `kind`
 expects `oci_container`, and the optional GPG check is not run for images. The
-state of a registered build (`product`, `critical_issues`, `verification`,
+state of a registered build (`product`, `security_level`, `verification`,
 `current_build`) is **always** reported, the remaining successful checks need
 `-v`. Like the repository checks, the image is
 only accepted if **all** RPC endpoints of the configured network are reachable
@@ -384,7 +402,7 @@ always says what was accepted:
 
 ```text
 [OK] product: 'Leap-16.1' (git_ref 1a2b3c…, oci_container)
-[OK] critical_issues: no known critical security issues
+[OK] security_level: no known security issues
 [OK] verification: reproducibility verification is approved
 [OK] current_build: repository is the current build
 ```
@@ -418,7 +436,7 @@ automatically.
 - `foundation_owner` may replace the three empowered roles
   (`set_product_creator`, `set_official_validator`, `set_security_team`).
 - Currently the contract also grants `foundation_owner` a **temporary
-  superuser override** on `set_critical` / `approve_attestation` /
+  superuser override** on `set_security_level` / `approve_attestation` /
   `reject_attestation` (commit `6ead57b`, marked TEMP; to be removed once
   ownership is settled).
 - Never store real `PRIVATE_KEY` values in this repository.
