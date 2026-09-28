@@ -749,6 +749,7 @@ def prompt(args, msg):
 # -- read-only commands -------------------------------------------------------
 
 def do_roles(w3, c, args):
+    print(f"compatibility_level: {c.functions.compatibility_level().call()}")
     print(f"foundation_owner : {c.functions.foundation_owner().call()}")
     print(f"product_creator  : {c.functions.product_creator().call()}")
     print(f"official_validator: {c.functions.official_validator().call()}")
