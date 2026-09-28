@@ -25,3 +25,15 @@ build/
 dist/
 *.egg-info
 
+# never commit signing keys: pass them with --key-file from outside the tree
+*.key
+key.txt
+deploy.key
+*.pem
+keystore/
+
+# editor leftovers
+*.swp
+*.swo
+*~
+

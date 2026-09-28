@@ -11,9 +11,14 @@
 # Regenerate with:
 #   python3 ape/build_contract.py   (or: make contract-build)
 
-import argparse, configparser, hashlib, json, os, re, sys
+import argparse, ast, configparser, hashlib, json, os, re, sys
 from web3 import Web3
-from web3.exceptions import ContractLogicError
+from web3.exceptions import (
+    ContractLogicError,
+    MethodUnavailable,
+    TimeExhausted,
+    Web3RPCError,
+)
 from eth_account import Account
 
 try:
@@ -471,14 +476,31 @@ def connect_web3(args):
     url = urls[0]
 
     w3 = Web3(Web3.HTTPProvider(url))
-    if not w3.is_connected():
+    try:
+        connected = w3.is_connected()
+    except Exception as e:
+        sys.exit(f"Cannot reach the RPC endpoint {url}:\n  {_rpc_reason(e)}")
+    if not connected:
         sys.exit(f"Cannot connect to {url}")
-    if w3.eth.syncing:
+    try:
+        syncing = w3.eth.syncing
+    except MethodUnavailable:
+        # a Nitro node does not implement eth_syncing at all; the verification
+        # tools cross-check every endpoint, so a missing method is not a reason
+        # to refuse the network
+        syncing = False
+    except Exception as e:
+        sys.exit(f"Cannot read the sync state of {url}:\n  {_rpc_reason(e)}")
+    if syncing:
         sys.exit("Node still syncing.")
 
     expected = args.chain_id or os.environ.get("CHAIN_ID") or net.get("chainid")
-    if expected and int(expected) != w3.eth.chain_id:
-        sys.exit(f"Wrong chain: got {w3.eth.chain_id}, expected {expected}")
+    try:
+        seen = w3.eth.chain_id
+    except Exception as e:
+        sys.exit(f"Cannot read the chain id of {url}:\n  {_rpc_reason(e)}")
+    if expected and int(expected) != seen:
+        sys.exit(f"Wrong chain: got {seen}, expected {expected}")
     return w3, None
 
 
@@ -513,6 +535,26 @@ def check_compatibility(contract, address):
     return contract
 
 
+def require_deployed_code(w3, address):
+    """Refuse an address that holds no contract at all.
+
+    Without this the next call fails on the missing compatibility_level() view
+    and the message blames an outdated contract, which is a different mistake
+    from a wrong or still unfilled address.
+    """
+    try:
+        code = w3.eth.get_code(address)
+    except Exception as e:
+        sys.exit(f"Cannot read the contract at {address}: {_rpc_reason(e)}")
+    if not code:
+        sys.exit(
+            f"No contract deployed at {address}.\n"
+            "  A mistyped address and an unfinished deployment look the same here.\n"
+            "  Check the network, deploy the contract, then pin the address that\n"
+            "  was printed by the deploy command."
+        )
+
+
 def get_contract_addr(w3, args):
     addr = args.contract or os.environ.get("CONTRACT_ADDRESS")
     if not addr:
@@ -523,13 +565,97 @@ def get_contract_addr(w3, args):
     if not Web3.is_address(addr):
         sys.exit(f"Invalid address: {addr}")
     address = Web3.to_checksum_address(addr)
+    require_deployed_code(w3, address)
     return check_compatibility(w3.eth.contract(address=address, abi=CONTRACT_ABI), address)
+
+
+def _rpc_reason(exc):
+    """Extract the node's message from a web3 exception.
+
+    For a node-returned error web3 puts the whole JSON response in .message as
+    a dict and .code does not exist, while the flat .user_message is generic
+    boilerplate ("An RPC error was returned by the node...") that tells the user
+    nothing. Only the inner message and code are worth printing.
+    """
+    message = getattr(exc, "message", None)
+    if isinstance(message, dict):
+        return _rpc_text(message.get("message"), message.get("code"))
+    if isinstance(message, str) and message.strip():
+        text = message.strip()
+        if text.startswith("{"):
+            # observed from web3 7.x: the whole response arrives stringified,
+            # as a python repr rather than strict JSON
+            parsed = _parse_response(text)
+            if isinstance(parsed, dict) and "message" in parsed:
+                return _rpc_text(parsed.get("message"), parsed.get("code"))
+        return text
+    return str(exc).strip() or exc.__class__.__name__
+
+
+def _parse_response(text):
+    for parse in (ast.literal_eval, json.loads):
+        try:
+            return parse(text)
+        except (ValueError, SyntaxError):
+            continue
+    return None
+
+
+def _rpc_text(text, code):
+    text = str(text).strip() if text is not None else ""
+    if code is not None:
+        return f"{text} (RPC error {code})"
+    return text
+
+
+def _rpc_error_message(exc, sender, endpoint, action):
+    """Turn an RPC-level failure into one actionable message, no traceback."""
+    reason = _rpc_reason(exc)
+    low = reason.lower()
+    if "insufficient funds" in low or "gas required exceeds allowance" in low:
+        hint = (
+            f"\n  {sender} does not hold enough balance to pay for this transaction.\n"
+            "  Fund the signing account on this network first; on Arbitrum Sepolia\n"
+            "  use the faucet (https://portal.arbitrum.io), on Hoodi the\n"
+            "  https://faucet.hoodi.ethpandaops.io faucet."
+        )
+    elif "nonce too low" in low or "already known" in low:
+        hint = (
+            f"\n  The node already knows a transaction for {sender} with this nonce.\n"
+            "  It may have been sent before: look it up on the explorer, or wait for\n"
+            "  the next block and retry."
+        )
+    elif "replacement transaction underpriced" in low or "already imported" in low:
+        hint = (
+            f"\n  A transaction for {sender} with this nonce is still pending.\n"
+            "  Wait for it to be mined, then retry; replacing it needs a fee\n"
+            "  higher than the pending one."
+        )
+    elif "intrinsic gas too low" in low:
+        hint = (
+            "\n  The gas limit does not cover the fee for this transaction.\n"
+            "  Retry with an explicit, generously sized --gas value."
+        )
+    else:
+        hint = (
+            f"\n  Endpoint: {endpoint}\n"
+            "  Check the node logs, or retry against another endpoint with --provider."
+        )
+    return f"{action} failed: {reason}\n  from     : {sender}{hint}"
+
+
+def _endpoint_of(w3):
+    endpoint = getattr(getattr(w3, "provider", None), "endpoint_uri", None)
+    return endpoint or "the configured RPC endpoint"
 
 
 def send_tx(w3, acct, fn_obj, gas=None):
     if acct is None:
         sys.exit("No signing key. Set PRIVATE_KEY or --key-file.")
     sender = acct.address
+    endpoint = _endpoint_of(w3)
+    fn_name = getattr(fn_obj, "fn_name", None)
+    action = f"Sending {fn_name}" if fn_name else "Deploying the contract"
     nonce = w3.eth.get_transaction_count(sender, "pending")
     if gas:
         est_gas = gas
@@ -552,21 +678,49 @@ def send_tx(w3, acct, fn_obj, gas=None):
                 "  The signing account may be missing the required role.\n"
                 f"  Check roles with the 'roles' command (or pass --gas to force).{hint}"
             )
+        except (Web3RPCError, ValueError) as e:
+            # an underfunded sender fails estimation on Arbitrum with
+            # "gas required exceeds allowance"; carrying on with a guessed limit
+            # would only turn this into a second, less useful error
+            low = _rpc_reason(e).lower()
+            if "insufficient funds" in low or "exceeds allowance" in low:
+                sys.exit(_rpc_error_message(e, sender, endpoint, "Gas estimation"))
+            print(f"Warning: gas estimation failed ({_rpc_reason(e)}), using 200000")
+            est_gas = 200000
         except Exception as e:
-            print(f"Warning: gas estimation failed ({e}), using 200000")
+            print(f"Warning: gas estimation failed ({_rpc_reason(e)}), using 200000")
             est_gas = 200000
     tx = fn_obj.build_transaction({
         "from": sender, "nonce": nonce, "chainId": w3.eth.chain_id, "gas": est_gas,
     })
     signed = acct.sign_transaction(tx)
     raw = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
-    txh = w3.eth.send_raw_transaction(raw)
-    rc = w3.eth.wait_for_transaction_receipt(txh)
+    try:
+        txh = w3.eth.send_raw_transaction(raw)
+    except (Web3RPCError, ValueError) as e:
+        sys.exit(_rpc_error_message(e, sender, endpoint, action))
+    except Exception as e:
+        sys.exit(f"{action} failed: {_rpc_reason(e)}\n  from     : {sender}")
+    try:
+        rc = w3.eth.wait_for_transaction_receipt(txh)
+    except TimeExhausted:
+        sys.exit(
+            f"Transaction {txh.hex()} was sent but not mined within the timeout.\n"
+            f"  Check it on an explorer for {endpoint} before retrying, so you do\n"
+            "  not pay twice for the same change."
+        )
     gas_used = rc.get("gasUsed")
     status = rc.get("status")
     print(f"tx     : {txh.hex()}")
     print(f"gas    : {gas_used}")
     print(f"status : {'OK' if status == 1 else 'FAILED'}")
+    if status != 1:
+        sys.exit(
+            f"Transaction {txh.hex()} was mined but reverted, so nothing was changed.\n"
+            f"  function : {getattr(fn_obj, 'fn_name', '?')}\n"
+            f"  from     : {sender}\n"
+            "  Look up the transaction on an explorer to see the revert reason."
+        )
     return rc
 
 

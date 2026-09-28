@@ -242,6 +242,20 @@ class ShippedConfTest(unittest.TestCase):
         for url in urls:
             self.assertTrue(url.startswith("https://"), url)
 
+    def test_shipped_conf_ships_both_arbitrum_networks(self):
+        conf = metadata.load_conf(SHIPPED_CONF)
+        for section, chainid in (("arbitrum", "42161"), ("arbitrum-sepolia", "421614")):
+            self.assertIn(section, conf)
+            self.assertEqual(conf[section]["chainid"], chainid)
+            urls = metadata.provider_urls(conf[section])
+            self.assertGreaterEqual(len(urls), 2, section)
+            for url in urls:
+                self.assertTrue(url.startswith("https://"), url)
+
+    def test_arbitrum_mainnet_is_not_prefilled_with_an_address(self):
+        conf = metadata.load_conf(SHIPPED_CONF)
+        self.assertEqual(conf["arbitrum"]["contract"], "")
+
 
 class VerifyBuildTest(unittest.TestCase):
     def test_approved_registered_build_passes(self):

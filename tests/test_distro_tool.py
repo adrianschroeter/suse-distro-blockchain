@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 from suse_distro_blockchain import distro_tool
+from web3.exceptions import MethodUnavailable, TimeExhausted, Web3RPCError
 
 DIGEST = "6a8998a33df6164d29d545c1bb8d9dd5a3595206d993b1a43c54de9aa33d8feb"
 MD5 = "e36b8dcaaf3e3f0b676be182ffdb44dd"
@@ -453,6 +454,7 @@ class ContractCompatibilityTest(unittest.TestCase):
 
     def test_get_contract_addr_checks_the_level(self):
         w3 = mock.Mock()
+        w3.eth.get_code.return_value = b"\x60"
         w3.eth.contract.return_value = self._contract(distro_tool.COMPATIBILITY_LEVEL)
         with mock.patch.object(distro_tool.Web3, "is_address", return_value=True), \
              mock.patch.object(distro_tool.Web3, "to_checksum_address", return_value=self.ADDRESS), \
@@ -461,6 +463,20 @@ class ContractCompatibilityTest(unittest.TestCase):
             contract = distro_tool.get_contract_addr(w3, args)
         w3.eth.contract.assert_called_once_with(address=self.ADDRESS, abi=distro_tool.CONTRACT_ABI)
         self.assertIs(contract, w3.eth.contract.return_value)
+
+    def test_an_address_without_code_is_not_blamed_on_the_version(self):
+        w3 = mock.Mock()
+        w3.eth.get_code.return_value = b""
+        with mock.patch.object(distro_tool.Web3, "is_address", return_value=True), \
+             mock.patch.object(distro_tool.Web3, "to_checksum_address", return_value=self.ADDRESS), \
+             mock.patch.dict(distro_tool.os.environ, {}, clear=True):
+            args = mock.Mock(contract=self.ADDRESS, network="hoodi", conf="/dev/null")
+            with self.assertRaises(SystemExit) as raised:
+                distro_tool.get_contract_addr(w3, args)
+        message = str(raised.exception)
+        self.assertIn("No contract deployed at", message)
+        self.assertNotIn("compatibility", message)
+        w3.eth.contract.assert_not_called()
 
 
 class SetSecurityLevelCliTest(unittest.TestCase):
@@ -548,6 +564,200 @@ class ShowIdSecurityHistoryTest(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             distro_tool.do_showid(mock.Mock(), contract, args)
         self.assertIn("no reports", out.getvalue())
+
+
+class SendTxErrorTests(unittest.TestCase):
+    """RPC failures must produce one actionable message, never a traceback."""
+
+    ADDRESS = "0x46B8f0Ca9AFD515e9E0dBba75287c0d85d522459"
+    RPC = "https://sepolia-rollup.arbitrum.io/rpc"
+
+    def rpc_error(self, message, code=-32003):
+        # the shape web3 produces for a node-returned error: the response dict
+        # lands in .message, the flat .user_message is generic boilerplate
+        return Web3RPCError({"code": code, "message": message})
+
+    def account(self):
+        acct = mock.Mock()
+        acct.address = self.ADDRESS
+        acct.sign_transaction.return_value = mock.Mock(raw_transaction=b"\x01")
+        return acct
+
+    def function(self, estimate=100000):
+        fn = mock.Mock()
+        fn.fn_name = "add_product"
+        fn.estimate_gas.return_value = estimate
+        return fn
+
+    def web3(self, send=None, receipt=None):
+        w3 = mock.Mock()
+        w3.eth.chain_id = 421614
+        w3.eth.get_transaction_count.return_value = 3
+        w3.eth.send_raw_transaction.side_effect = send
+        w3.eth.wait_for_transaction_receipt.return_value = receipt
+        w3.provider.endpoint_uri = self.RPC
+        return w3
+
+    def exit_message(self, fn, w3, acct=None, gas=None):
+        with self.assertRaises(SystemExit) as caught:
+            distro_tool.send_tx(w3, acct or self.account(), fn, gas=gas)
+        return " ".join(str(caught.exception).split())
+
+    def test_no_funds_reports_the_balance_problem_and_the_faucet(self):
+        error = self.rpc_error(
+            "insufficient funds for gas * price + value: have 0 want 1950624946997360")
+        message = self.exit_message(self.function(), self.web3(send=error))
+        self.assertIn("insufficient funds for gas * price + value", message)
+        self.assertIn(self.ADDRESS, message)
+        self.assertIn("does not hold enough balance", message)
+        self.assertIn("https://portal.arbitrum.io", message)
+        self.assertIn("RPC error -32003", message)
+
+    def test_the_boilerplate_and_the_traceback_are_not_shown(self):
+        error = self.rpc_error("insufficient funds for gas * price + value: have 0")
+        message = self.exit_message(self.function(), self.web3(send=error))
+        self.assertNotIn("An RPC error was returned by the node", message)
+        self.assertNotIn("Traceback", message)
+        self.assertNotIn("web3.exceptions", message)
+        self.assertNotIn("'code':", message)
+
+    def test_an_unfunded_account_is_caught_during_estimation(self):
+        error = self.rpc_error("gas required exceeds allowance", code=-32000)
+        fn = self.function()
+        fn.estimate_gas.side_effect = error
+        w3 = self.web3()
+        message = self.exit_message(fn, w3)
+        w3.eth.send_raw_transaction.assert_not_called()
+        self.assertIn("does not hold enough balance", message)
+
+    def test_a_stringified_response_is_unwrapped(self):
+        # the shape web3 7.x really produces for a node-returned error
+        error = Web3RPCError(
+            "{'code': -32003, 'message': 'insufficient funds for gas * price + value: "
+            "have 0 want 1950624946997360'}")
+        message = self.exit_message(self.function(), self.web3(send=error))
+        self.assertIn("insufficient funds for gas * price + value", message)
+        self.assertIn("RPC error -32003", message)
+        self.assertNotIn("'code':", message)
+        self.assertNotIn("{", message)
+
+    def test_a_plain_string_error_is_passed_through(self):
+        error = Web3RPCError("intrinsic gas too low")
+        message = self.exit_message(self.function(), self.web3(send=error))
+        self.assertIn("intrinsic gas too low", message)
+        self.assertIn("--gas", message)
+
+    def test_a_contract_deployment_is_named_as_such(self):
+        error = self.rpc_error("insufficient funds for gas * price + value: have 0")
+        fn = self.function()
+        fn.fn_name = None
+        message = self.exit_message(fn, self.web3(send=error))
+        self.assertIn("Deploying the contract failed", message)
+
+    def test_a_reused_nonce_points_at_the_pending_transaction(self):
+        error = self.rpc_error("nonce too low")
+        message = self.exit_message(self.function(), self.web3(send=error))
+        self.assertIn("already knows a transaction", message)
+
+    def test_an_unknown_error_names_the_endpoint(self):
+        error = self.rpc_error("header not found")
+        message = self.exit_message(self.function(), self.web3(send=error))
+        self.assertIn(self.RPC, message)
+        self.assertIn("--provider", message)
+
+    def test_an_explicit_gas_limit_skips_estimation(self):
+        error = self.rpc_error("insufficient funds for gas * price + value: have 0")
+        fn = self.function()
+        self.exit_message(fn, self.web3(send=error), gas=2000000)
+        fn.estimate_gas.assert_not_called()
+
+    def test_a_reverted_transaction_exits_instead_of_reporting_success(self):
+        receipt = {"status": 0, "gasUsed": 21000, "transactionHash": b"\xaa"}
+        w3 = self.web3(receipt=receipt)
+        w3.eth.send_raw_transaction.return_value = mock.Mock(hex=lambda: "0xdead")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as caught:
+            distro_tool.send_tx(w3, self.account(), self.function())
+        self.assertIn("status : FAILED", out.getvalue())
+        self.assertIn("mined but reverted", " ".join(str(caught.exception).split()))
+
+    def test_a_timeout_names_the_transaction_to_look_up(self):
+        w3 = self.web3()
+        w3.eth.send_raw_transaction.return_value = mock.Mock(hex=lambda: "0xbeef")
+        w3.eth.wait_for_transaction_receipt.side_effect = TimeExhausted("no receipt")
+        with self.assertRaises(SystemExit) as caught:
+            distro_tool.send_tx(w3, self.account(), self.function())
+        message = " ".join(str(caught.exception).split())
+        self.assertIn("0xbeef", message)
+        self.assertIn("not mined", message)
+        self.assertIn("pay twice", message)
+
+    def test_a_successful_send_still_returns_the_receipt(self):
+        receipt = {"status": 1, "gasUsed": 12345}
+        w3 = self.web3(receipt=receipt)
+        w3.eth.send_raw_transaction.return_value = mock.Mock(hex=lambda: "0xcafe")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = distro_tool.send_tx(w3, self.account(), self.function())
+        self.assertIs(rc, receipt)
+        self.assertIn("status : OK", out.getvalue())
+
+
+class ConnectWeb3Test(unittest.TestCase):
+    """A node that does not implement eth_syncing (Nitro) must still be usable."""
+
+    RPC = "https://arb1.arbitrum.io/rpc"
+
+    def args(self, provider="https://a.example,https://b.example", chain_id="42161"):
+        return mock.Mock(provider=provider, chain_id=chain_id, network="arbitrum", conf="x")
+
+    def web3(self, connected=True, syncing=False, chain_id=42161):
+        w3 = mock.Mock()
+        w3.is_connected.return_value = connected
+        w3.eth = mock.Mock()
+        w3.eth.chain_id = chain_id
+        if syncing is None:
+            # a Nitro node rejects the method, so reading the attribute raises
+            type(w3.eth).syncing = mock.PropertyMock(side_effect=MethodUnavailable(
+                "{'code': -32601, 'message': 'the method eth_syncing does not exist'}"))
+        else:
+            w3.eth.syncing = syncing
+        return w3
+
+    def connect(self, w3, args=None):
+        presets = {"arbitrum": {"http_provider": "https://a.example,https://b.example",
+                                "chainid": "42161"}}
+        with mock.patch.object(distro_tool, "load_conf", return_value=presets), \
+             mock.patch.object(distro_tool, "Web3", return_value=w3):
+            return distro_tool.connect_web3(args or self.args())
+
+    def test_a_node_without_eth_syncing_is_accepted(self):
+        w3 = self.web3(syncing=None)
+        w3_out, _ = self.connect(w3)
+        self.assertIs(w3_out, w3)
+
+    def test_a_syncing_node_is_refused(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.connect(self.web3(syncing=True))
+        self.assertIn("still syncing", str(raised.exception))
+
+    def test_a_wrong_chain_is_refused(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.connect(self.web3(chain_id=421614))
+        self.assertIn("Wrong chain", str(raised.exception))
+
+    def test_an_unreachable_endpoint_is_reported_without_a_traceback(self):
+        w3 = self.web3()
+        w3.is_connected.side_effect = ValueError("connection refused")
+        with self.assertRaises(SystemExit) as raised:
+            self.connect(w3)
+        self.assertIn("connection refused", str(raised.exception))
+        self.assertNotIn("Traceback", str(raised.exception))
+
+    def test_no_provider_is_reported(self):
+        with self.assertRaises(SystemExit) as raised:
+            distro_tool.connect_web3(self.args(provider=""))
+        self.assertIn("No provider", str(raised.exception))
 
 
 if __name__ == "__main__":
