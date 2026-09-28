@@ -99,7 +99,7 @@ distro_tool --network sepolia add-build <git sha256> rpmmd <sha512>
 # validator / security roles
 distro_tool approve <sha512>
 distro_tool reject <sha512>
-distro_tool set-security-level 1 important
+distro_tool set-security-level <sha512> important
 
 # read-only
 distro_tool roles

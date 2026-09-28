@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for the distro_tool argument validation and SPDX SBOM parsing."""
 
+import contextlib
+import io
 import unittest
 from unittest import mock
 
@@ -462,24 +464,90 @@ class ContractCompatibilityTest(unittest.TestCase):
 
 
 class SetSecurityLevelCliTest(unittest.TestCase):
+    VERIFICATION = "aa" * 32
+
     def test_set_security_level_subcommand(self):
-        args = distro_tool.build_parser().parse_args(["set-security-level", "3", "important"])
+        args = distro_tool.build_parser().parse_args(
+            ["set-security-level", self.VERIFICATION, "important"])
         self.assertIs(args.func, distro_tool.do_set_security_level)
-        self.assertEqual(args.product_id, 3)
+        self.assertEqual(args.verification, self.VERIFICATION)
         self.assertEqual(args.level, "important")
 
     def test_the_old_set_critical_command_is_gone(self):
         with self.assertRaises(SystemExit):
-            distro_tool.build_parser().parse_args(["set-critical", "3", "true"])
+            distro_tool.build_parser().parse_args(["set-critical", self.VERIFICATION, "true"])
 
     def test_set_security_level_sends_the_flag_value(self):
-        args = distro_tool.build_parser().parse_args(["-y", "set-security-level", "3", "moderate"])
-        contract = mock.Mock()
+        args = distro_tool.build_parser().parse_args(
+            ["-y", "set-security-level", self.VERIFICATION, "moderate"])
+        contract = self.contract(registered=True)
         with mock.patch.object(distro_tool, "get_signer", return_value=mock.Mock()), \
              mock.patch.object(distro_tool, "send_tx") as send:
             distro_tool.do_set_security_level(mock.Mock(), contract, args)
-        contract.functions.set_security_level.assert_called_once_with(3, 4)
+        contract.functions.set_security_level.assert_called_once_with(self.VERIFICATION, 4)
         self.assertEqual(send.call_count, 1)
+
+    def test_withdrawing_a_report_sends_not_set(self):
+        args = distro_tool.build_parser().parse_args(
+            ["-y", "set-security-level", self.VERIFICATION, "not_set"])
+        contract = self.contract(registered=True)
+        with mock.patch.object(distro_tool, "get_signer", return_value=mock.Mock()), \
+             mock.patch.object(distro_tool, "send_tx"):
+            distro_tool.do_set_security_level(mock.Mock(), contract, args)
+        contract.functions.set_security_level.assert_called_once_with(
+            self.VERIFICATION, distro_tool.SECURITY_LEVELS["not_set"])
+
+    def test_an_unregistered_build_is_refused_without_a_transaction(self):
+        args = distro_tool.build_parser().parse_args(
+            ["-y", "set-security-level", self.VERIFICATION, "critical"])
+        contract = self.contract(registered=False)
+        with mock.patch.object(distro_tool, "get_signer", return_value=mock.Mock()), \
+             mock.patch.object(distro_tool, "send_tx") as send:
+            with self.assertRaises(SystemExit):
+                distro_tool.do_set_security_level(mock.Mock(), contract, args)
+        send.assert_not_called()
+        contract.functions.set_security_level.assert_not_called()
+
+    def test_a_bogus_digest_is_rejected(self):
+        args = distro_tool.build_parser().parse_args(
+            ["-y", "set-security-level", "not-a-digest", "low"])
+        with self.assertRaises(SystemExit):
+            distro_tool.do_set_security_level(mock.Mock(), self.contract(registered=True), args)
+
+    def contract(self, registered):
+        contract = mock.Mock()
+        build = (1, 1, 2, 0) if registered else (0, 0, 0, 0)
+        contract.functions.get_product_build.return_value.call.return_value = build
+        contract.functions.get_product.return_value.call.return_value = ("example-1", "f" * 64)
+        return contract
+
+
+class ShowIdSecurityHistoryTest(unittest.TestCase):
+    def test_showid_prints_the_reports_of_the_product(self):
+        contract = mock.Mock()
+        contract.functions.get_product.return_value.call.return_value = ("example-1", "f" * 64)
+        contract.functions.product_security.return_value.call.return_value = [
+            ("aa" * 32, 16), ("bb" * 32, 1)]
+        args = distro_tool.build_parser().parse_args(["showid", "1"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            distro_tool.do_showid(mock.Mock(), contract, args)
+        report = out.getvalue()
+        self.assertIn("aa" * 32, report)
+        self.assertIn("critical", report)
+        # a withdrawn report is still shown, it consumed a slot of the history
+        self.assertIn("not_set", report)
+        self.assertIn(str(distro_tool.MAX_SECURITY_MARKERS), report)
+
+    def test_showid_says_so_when_nothing_was_reported(self):
+        contract = mock.Mock()
+        contract.functions.get_product.return_value.call.return_value = ("example-1", "f" * 64)
+        contract.functions.product_security.return_value.call.return_value = []
+        args = distro_tool.build_parser().parse_args(["showid", "1"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            distro_tool.do_showid(mock.Mock(), contract, args)
+        self.assertIn("no reports", out.getvalue())
 
 
 if __name__ == "__main__":

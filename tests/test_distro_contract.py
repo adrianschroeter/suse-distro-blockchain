@@ -11,6 +11,7 @@ this module on systems without boa.
 """
 
 import os
+import re
 
 CONTRACT_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                os.pardir, "ape", "contracts", "distro.vy")
@@ -83,31 +84,78 @@ def main():
         raise SystemExit(1)
     print("Product is verified to be current")
 
-    # a new product starts without any reported security issue
-    if contract.get_product(product_build[0])[2] != NOT_SET:
-        print("A new product does not start at not_set")
+    # a new build starts without any reported security issue
+    if contract.get_product_build(primary_sha)[3] != NOT_SET:
+        print("A new build does not start at not_set")
         raise SystemExit(1)
-    print("Security level of a new product is not_set")
+    print("Security level of a new build is not_set")
 
-    # the security team walks the product through every level
-    boa.env.eoa = security_team.address
-    for level in (LOW, MODERATE, IMPORTANT, CRITICAL):
-        contract.set_security_level(product_build[0], level)
-        if contract.get_product(product_build[0])[2] != level:
-            print(f"Security level is not {level}")
+    # a report is made for one build and covers every build of the product that
+    # was registered before it, so the test needs a few builds to look at
+    other_builds = ["b" * 128, "c" * 128, "d" * 128, "e" * 128]
+    boa.env.eoa = product_creator.address
+    for verification_of_build in other_builds:
+        contract.add_product_build(git_sha, build_kind, verification_of_build)
+    build_a, build_b, build_c, build_d, build_e = (
+        [primary_sha] + other_builds)
+
+    def levels(*expected):
+        """The level in effect for each build, oldest first."""
+        got = [contract.get_product_build(v)[3] for v in
+               (build_a, build_b, build_c, build_d, build_e)]
+        if got != list(expected):
+            print(f"Levels are {got}, expected {list(expected)}")
             raise SystemExit(1)
+
+    # a critical report on the second build also covers the first one
+    boa.env.eoa = security_team.address
+    contract.set_security_level(build_b, CRITICAL)
+    levels(CRITICAL, CRITICAL, NOT_SET, NOT_SET, NOT_SET)
+    print("A report covers the builds registered before it")
+
+    # a later build can carry a lower level without touching the earlier ones
+    contract.set_security_level(build_d, LOW)
+    levels(CRITICAL, CRITICAL, LOW, LOW, NOT_SET)
+    print("A later report starts a new range")
+
+    # a report about an already reported build replaces it, also when it is
+    # made out of order, i.e. after a report about a newer build
+    contract.set_security_level(build_b, MODERATE)
+    levels(MODERATE, MODERATE, LOW, LOW, NOT_SET)
+    print("An out of order report updates its own build")
+
+    # and not_set withdraws the report again
+    contract.set_security_level(build_c, NOT_SET)
+    levels(MODERATE, MODERATE, NOT_SET, LOW, NOT_SET)
+    print("A report can be withdrawn")
+
+    # every level the security team can report
+    for level in (LOW, MODERATE, IMPORTANT, CRITICAL):
+        contract.set_security_level(build_a, level)
+        if contract.get_product_build(build_a)[3] != level:
+            print(f"Security level of the oldest build is not {level}")
+            raise SystemExit(1)
+    contract.set_security_level(build_a, NOT_SET)
     print("Security level can be set to every level")
 
-    # and clears or lowers it again
-    contract.set_security_level(product_build[0], NOT_SET)
-    if contract.get_product(product_build[0])[2] != NOT_SET:
-        print("Security level is not reset to not_set")
+    # the reports are kept as a history, in the order they were made
+    history = contract.product_security(product_id)
+    if [m[0] for m in history] != [build_b, build_d, build_c, build_a]:
+        print(f"Report history is {[m[0] for m in history]}")
         raise SystemExit(1)
-    contract.set_security_level(product_build[0], LOW)
-    if contract.get_product(product_build[0])[2] != LOW:
-        print("Security level is not low")
+    if [m[1] for m in history] != [MODERATE, LOW, NOT_SET, NOT_SET]:
+        print(f"Report levels are {[m[1] for m in history]}")
         raise SystemExit(1)
-    print("Security level can be lowered again")
+    print("The report history is readable")
+
+    # reports need a registered build
+    try:
+        contract.set_security_level("f" * 128, CRITICAL)
+    except Exception:
+        print("A report for an unknown build is refused")
+    else:
+        print("A report for an unknown build was accepted")
+        raise SystemExit(1)
 
     # Validator approves
     boa.env.eoa = validator.address
@@ -134,7 +182,62 @@ def main():
 
     ### FIXME: add validations that functions are not working when not permitted
 
+    check_report_limit(boa, product_creator, security_team)
+
     print("  SUCCESS :)  ")
+
+
+def check_report_limit(boa, product_creator, security_team):
+    """A product cannot be flagged on more builds than it keeps reports.
+
+    The limit is a constant of the contract, so this deploys a copy of the very
+    same source with a small one instead of registering 256 builds.
+    """
+    import tempfile
+
+    with open(CONTRACT_SOURCE) as handle:
+        source = handle.read()
+    # the limit is a constant of the contract, so this deploys a copy of the
+    # very same source with a small one instead of registering 256 builds
+    declared = re.compile(r"MAX_SECURITY_MARKERS: constant\(uint256\) = \d+")
+    if len(declared.findall(source)) != 1:
+        raise SystemExit("MAX_SECURITY_MARKERS is not declared exactly once")
+    handle = tempfile.NamedTemporaryFile("w", suffix=".vy", delete=False)
+    with handle:
+        handle.write(declared.sub("MAX_SECURITY_MARKERS: constant(uint256) = 2",
+                                  source, count=1))
+    if not re.search(r"MAX_SECURITY_MARKERS: constant\(uint256\) = 2\b", open(handle.name).read()):
+        raise SystemExit("could not lower MAX_SECURITY_MARKERS for the limit test")
+    try:
+        boa.env.eoa = product_creator.address
+        contract = boa.load(handle.name, product_creator.address,
+                            product_creator.address, security_team.address)
+        git_ref = "a" * 64
+        contract.add_product("limit-test", git_ref)
+        builds = [chr(ord("0") + i) * 128 for i in range(3)]
+        for build in builds:
+            contract.add_product_build(git_ref, 1, build)
+        boa.env.eoa = security_team.address
+        contract.set_security_level(builds[0], 16)
+        contract.set_security_level(builds[1], 16)
+        try:
+            contract.set_security_level(builds[2], 16)
+        except Exception:
+            pass
+        else:
+            raise SystemExit("A report beyond the limit was accepted")
+        # the state is unchanged, the build is not quietly reported as clean
+        if len(contract.product_security(1)) != 2:
+            raise SystemExit("The refused report changed the history")
+        if contract.get_product_build(builds[2])[3] != 1:
+            raise SystemExit("The refused report changed a level")
+        # an already reported build can still be corrected at the limit
+        contract.set_security_level(builds[1], 1)
+        if contract.get_product_build(builds[1])[3] != 1:
+            raise SystemExit("A report could not be corrected at the limit")
+        print("The report limit is enforced and stays correct")
+    finally:
+        os.unlink(handle.name)
 
 
 if __name__ == "__main__":

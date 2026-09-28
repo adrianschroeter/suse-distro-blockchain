@@ -956,7 +956,7 @@ class ConnectContractsTest(unittest.TestCase):
 class ChainClientsTest(unittest.TestCase):
     def test_agreeing_answers_are_returned(self):
         clients = endpoints(registered_contract(), registered_contract())
-        self.assertEqual(clients.call("get_product_build", VERIFICATION), (1, 1, 2))
+        self.assertEqual(clients.call("get_product_build", VERIFICATION), (1, 1, 2, 1))
         self.assertIn("2 RPC endpoints", clients.consensus_message())
 
     def test_disagreeing_answers_raise(self):
