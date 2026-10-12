@@ -3,6 +3,8 @@
 
 import contextlib
 import io
+import json
+import tempfile
 import unittest
 from unittest import mock
 
@@ -117,6 +119,16 @@ def rpm_pkg():
             },
             disturl_ref(url="obs://build.opensuse.org/openSUSE:Backports:SLE-16.1/standard/" + OTHER_MD5 + "-0ad"),
         ],
+    }
+
+
+def release_pkg():
+    """The release package of the product, marking a product medium SBOM."""
+    return {
+        "name": "Leap-release",
+        "SPDXID": "SPDXRef-Package-rpm-Leap-release",
+        "versionInfo": "16.1",
+        "sourceInfo": "acquired package info from RPM DB",
     }
 
 
@@ -387,6 +399,92 @@ class RealLeapSbomTest(unittest.TestCase):
         self.assertLessEqual(len(distro_tool.product_ref(root)), 64)
         self.assertEqual(distro_tool.validate_verification(checksum), checksum)
         self.assertEqual(distro_tool.BUILD_KINDS["rpmmd"], 1)
+
+
+class ReleasePackageNameTest(unittest.TestCase):
+    def test_leap_release_package_name(self):
+        self.assertEqual(distro_tool.release_package_name("Leap-16.1"), "Leap-release")
+
+    def test_tumbleweed_release_package_name(self):
+        self.assertEqual(
+            distro_tool.release_package_name("Tumbleweed-20260924"), "Tumbleweed-release")
+
+    def test_single_digit_version(self):
+        self.assertEqual(distro_tool.release_package_name("Leap-15"), "Leap-release")
+
+    def test_multi_component_name_keeps_the_rest(self):
+        self.assertEqual(
+            distro_tool.release_package_name("openSUSE-Leap-16.1"), "openSUSE-Leap-release")
+
+    def test_without_a_version_suffix(self):
+        self.assertEqual(distro_tool.release_package_name("Tumbleweed"), "Tumbleweed-release")
+
+    def test_release_pkg_is_found_in_the_sbom(self):
+        doc = spdx2(root_refs=[disturl_ref()],
+                    packages=[rpm_pkg(), repository_pkg(PRIMARY), release_pkg()])
+        self.assertTrue(distro_tool._spdx_has_package(doc, "Leap-release"))
+        doc2 = spdx2(root_refs=[disturl_ref()], packages=[rpm_pkg(), repository_pkg(PRIMARY)])
+        self.assertFalse(distro_tool._spdx_has_package(doc2, "Leap-release"))
+
+
+class RegisterKindTest(unittest.TestCase):
+    """register picks the build kind from the product's release package."""
+
+    def _sbom_path(self, doc):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(doc, f)
+            return f.name
+
+    def _args(self, path, dry_run=False):
+        return distro_tool.build_parser().parse_args(
+            ["register", path] + (["--dry-run"] if dry_run else []))
+
+    def _dry_run_kind(self, doc):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            distro_tool.do_register(
+                mock.Mock(), mock.Mock(), self._args(self._sbom_path(doc), dry_run=True))
+        return out.getvalue()
+
+    def test_release_package_selects_the_product_kind(self):
+        doc = spdx2(root_refs=[disturl_ref()],
+                    packages=[rpm_pkg(), repository_pkg(PRIMARY), release_pkg()])
+        self.assertIn("kind     : product", self._dry_run_kind(doc))
+
+    def test_without_release_package_the_kind_stays_rpmmd(self):
+        doc = spdx2(root_refs=[disturl_ref()],
+                    packages=[rpm_pkg(), repository_pkg(PRIMARY)])
+        self.assertIn("kind     : rpmmd", self._dry_run_kind(doc))
+
+    def test_product_kind_is_registered_on_chain(self):
+        doc = spdx2(root_refs=[disturl_ref()],
+                    packages=[rpm_pkg(), repository_pkg(PRIMARY), release_pkg()])
+        contract = mock.Mock()
+        contract.functions.get_product_build.return_value.call.return_value = (0, 0, 0, 0)
+        with mock.patch.object(distro_tool, "get_signer", return_value=mock.Mock()), \
+             mock.patch.object(distro_tool, "_require_any_role"), \
+             mock.patch.object(distro_tool, "_find_product", return_value=(1, False)), \
+             mock.patch.object(distro_tool, "prompt", return_value=True), \
+             mock.patch.object(distro_tool, "send_tx"), \
+             contextlib.redirect_stdout(io.StringIO()):
+            distro_tool.do_register(mock.Mock(), contract, self._args(self._sbom_path(doc)))
+        contract.functions.add_product_build.assert_called_once_with(
+            MD5, distro_tool.BUILD_KINDS["product"], PRIMARY)
+
+    def test_rpmmd_kind_is_registered_without_release_package(self):
+        doc = spdx2(root_refs=[disturl_ref()],
+                    packages=[rpm_pkg(), repository_pkg(PRIMARY)])
+        contract = mock.Mock()
+        contract.functions.get_product_build.return_value.call.return_value = (0, 0, 0, 0)
+        with mock.patch.object(distro_tool, "get_signer", return_value=mock.Mock()), \
+             mock.patch.object(distro_tool, "_require_any_role"), \
+             mock.patch.object(distro_tool, "_find_product", return_value=(1, False)), \
+             mock.patch.object(distro_tool, "prompt", return_value=True), \
+             mock.patch.object(distro_tool, "send_tx"), \
+             contextlib.redirect_stdout(io.StringIO()):
+            distro_tool.do_register(mock.Mock(), contract, self._args(self._sbom_path(doc)))
+        contract.functions.add_product_build.assert_called_once_with(
+            MD5, distro_tool.BUILD_KINDS["rpmmd"], PRIMARY)
 
 
 class LoadSbomTest(unittest.TestCase):

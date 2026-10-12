@@ -237,7 +237,7 @@ obs-build (`generate_sbom`), so no checksums have to be copied by hand:
 distro_tool --network hoodi --contract 0xADDRESS \
     register --dry-run Leap-16.1.spdx.json
 
-# register the product and its rpmmd build
+# register the product and its build
 distro_tool --network hoodi --contract 0xADDRESS \
     register Leap-16.1.spdx.json
 ```
@@ -246,7 +246,8 @@ distro_tool --network hoodi --contract 0xADDRESS \
 | --- | --- |
 | `name` of the root package (`SPDXRef-DOCUMENT-ROOT`, or the target of the SPDX 3 `describes` relationship) | product `name`, arch and build suffix removed (`Leap-16.1-aarch64-ppc64le-s390x-x86_64-Build50.2` becomes `Leap-16.1`), max 16 chars |
 | fragment of the root package's `vcs` reference, otherwise the md5 in its `obs-disturl` locator | `git_ref`, the product anchor: hex md5 (32), sha1 (40) or sha256 (64) |
-| `rpm-md-primary-checksum` reference, otherwise the `versionInfo` of the first `repository` package with `primaryPackagePurpose: INSTALL`, otherwise the root package `versionInfo` | `rpmmd` build `verification`, stored as bare hex (max 128 chars, so sha512 fits) |
+| `rpm-md-primary-checksum` reference, otherwise the `versionInfo` of the first `repository` package with `primaryPackagePurpose: INSTALL`, otherwise the root package `versionInfo` | build `verification`, stored as bare hex (max 128 chars, so sha512 fits) |
+| presence of the product's release package, `<NAME>-release` where `<NAME>` is the product name without its trailing `-VERSION` (e.g. `Leap-release` for `Leap-16.1`) | build `kind`: `product` if the package is present, `rpmmd` otherwise |
 
 A product medium SBOM contains one `repository` package per `repomd.xml`; only
 the first one is registered, the others are listed as skipped warnings. Since

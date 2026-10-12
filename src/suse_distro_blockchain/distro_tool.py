@@ -310,6 +310,23 @@ def product_ref(root):
     )
 
 
+# the trailing version of a product name, e.g. "16.1" in "Leap-16.1"
+SBOM_VERSION_SUFFIX_RE = re.compile(r"-[0-9]+(\.[0-9]+)*$")
+
+
+def release_package_name(name):
+    """Release package of a product named NAME-VERSION, e.g. 'Leap-release'."""
+    return SBOM_VERSION_SUFFIX_RE.sub("", name) + "-release"
+
+
+def _spdx_has_package(doc, name):
+    """Whether the SBOM contains a package named ``name`` (case-insensitive)."""
+    return any(
+        str(p.get("name", "")).lower() == name.lower()
+        for p in _spdx_packages(doc)
+    )
+
+
 def validate_product_ref(r):
     """Validate an SBOM derived product anchor (obs md5 or git checksum)."""
     if not r or not is_hex(r) or len(r) > 64:
@@ -962,7 +979,11 @@ def do_add_build(w3, c, args):
 
 
 def do_register(w3, c, args):
-    """Register product and rpmmd build from an SPDX 2.x or 3.x SBOM."""
+    """Register the product and its build from an SPDX 2.x or 3.x SBOM.
+
+    The build kind is 'product' when the SBOM ships the product's release
+    package (e.g. 'Leap-release' for the product 'Leap-16.1'), else 'rpmmd'.
+    """
     doc = _load_sbom(args.sbom)
     root = _spdx_root(doc)
     name = product_name(root)
@@ -970,10 +991,16 @@ def do_register(w3, c, args):
         sys.exit(f"Product name '{name}' is not 1-16 chars (contract limit).")
     git_ref = validate_product_ref(product_ref(root))
     checksum, skipped = rpmmd_checksum(doc, root)
+    kind = (
+        BUILD_KINDS["product"]
+        if _spdx_has_package(doc, release_package_name(name))
+        else BUILD_KINDS["rpmmd"]
+    )
 
     print(f"SBOM     : {args.sbom}")
     print(f"name     : {name}")
     print(f"git_ref  : {git_ref}")
+    print(f"kind     : {BUILD_KIND_NAMES[kind]}")
     print(f"rpmmd    : {checksum}")
     for extra in skipped:
         print(f"  WARNING: additional repository checksum {extra} skipped")
@@ -981,7 +1008,6 @@ def do_register(w3, c, args):
     if args.dry_run:
         return
 
-    kind = BUILD_KINDS["rpmmd"]
     acct = get_signer(w3, args)
     _require_any_role(c, acct, "product_creator")
     product_id, collision = _find_product(c, name, git_ref)
