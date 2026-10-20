@@ -102,7 +102,7 @@ distro_tool reject <sha512>
 distro_tool set-security-level <sha512> important
 
 # read-only
-distro_tool roles
+distro_tool contract
 distro_tool showid 1
 distro_tool current Leap-16.1         # all build kinds
 distro_tool current Leap-16.1 rpmmd   # single build kind

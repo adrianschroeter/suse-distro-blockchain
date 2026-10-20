@@ -63,7 +63,7 @@ pin it for later runs, e.g. in `suse-distro-check.conf` under
 Verify the deployed contract and default roles:
 
 ```bash
-distro_tool --network hoodi --contract 0xADDRESS roles
+distro_tool --network hoodi --contract 0xADDRESS contract
 ```
 
 Limitations: Everybody can deploy a contract, but the contract address is
@@ -97,7 +97,7 @@ distro_tool --network arbitrum-sepolia --key-file key.txt \
 # -> deployed: 0x...
 
 # 2. pin the address in the conf section, then check the roles
-distro_tool --network arbitrum-sepolia roles
+distro_tool --network arbitrum-sepolia contract
 ```
 
 The L1 part of the fee is priced from the parent chain calldata price and
@@ -153,7 +153,7 @@ distro_tool --network arbitrum --key-file key.txt \
 # -> deployed: 0x...
 
 # 2. pin the address in the conf section, then check the roles
-distro_tool --network arbitrum roles
+distro_tool --network arbitrum contract
 ```
 
 Enforcement of a repository against Arbitrum One is the same one-liner:

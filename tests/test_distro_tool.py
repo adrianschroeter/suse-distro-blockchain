@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for the distro_tool argument validation and SPDX SBOM parsing."""
 
+import argparse
 import contextlib
 import io
 import json
@@ -578,15 +579,23 @@ class ContractCompatibilityTest(unittest.TestCase):
 
 
 class ContractCommandTest(unittest.TestCase):
-    """The contract command reports identity and size of the contract in use."""
+    """The contract command reports identity, roles and size of the contract."""
 
     ADDRESS = "0x02724c2d1e76Ea3A24247A48F959532cDb152Fb6"
+    OWNER = "0x" + "aa" * 20
+    CREATOR = "0x" + "bb" * 20
+    VALIDATOR = "0x" + "cc" * 20
+    SECURITY = "0x" + "dd" * 20
 
     def _contract(self):
         contract = mock.Mock(address=self.ADDRESS)
         contract.functions.compatibility_level.return_value.call.return_value = (
             distro_tool.COMPATIBILITY_LEVEL
         )
+        contract.functions.foundation_owner.return_value.call.return_value = self.OWNER
+        contract.functions.product_creator.return_value.call.return_value = self.CREATOR
+        contract.functions.official_validator.return_value.call.return_value = self.VALIDATOR
+        contract.functions.security_team.return_value.call.return_value = self.SECURITY
         contract.functions.get_product_counter.return_value.call.return_value = 3
         # next_build is the next free sequence number, so 5 means 4 builds
         contract.functions.next_build.return_value.call.return_value = 5
@@ -596,22 +605,33 @@ class ContractCommandTest(unittest.TestCase):
         args = distro_tool.build_parser().parse_args(["contract"])
         self.assertIs(args.func, distro_tool.do_contract)
 
-    def test_reports_address_level_and_entry_counts(self):
+    def test_roles_and_counter_subcommands_are_gone(self):
+        parser = distro_tool.build_parser()
+        for gone in ("roles", "counter"):
+            with self.assertRaises(SystemExit), \
+                    mock.patch("sys.stderr", new_callable=io.StringIO):
+                parser.parse_args([gone])
+
+    def test_reports_address_roles_and_entry_counts(self):
         args = distro_tool.build_parser().parse_args(["--network", "hoodi", "contract"])
         w3 = mock.Mock()
         w3.eth.chain_id = 560048
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             distro_tool.do_contract(w3, self._contract(), args)
         text = out.getvalue()
-        self.assertIn("network         : hoodi (chain id 560048)", text)
-        self.assertIn(f"contract        : {self.ADDRESS}", text)
+        self.assertIn("network           : hoodi (chain id 560048)", text)
+        self.assertIn(f"contract          : {self.ADDRESS}", text)
         self.assertIn(
-            f"compatibility   : {distro_tool.COMPATIBILITY_LEVEL} "
+            f"compatibility     : {distro_tool.COMPATIBILITY_LEVEL} "
             f"(this tool implements level {distro_tool.COMPATIBILITY_LEVEL})",
             text,
         )
-        self.assertIn("products        : 3", text)
-        self.assertIn("builds          : 4", text)
+        self.assertIn(f"foundation_owner  : {self.OWNER}", text)
+        self.assertIn(f"product_creator   : {self.CREATOR}", text)
+        self.assertIn(f"official_validator: {self.VALIDATOR}", text)
+        self.assertIn(f"security_team     : {self.SECURITY}", text)
+        self.assertIn("products          : 3", text)
+        self.assertIn("builds            : 4", text)
 
     def test_a_fresh_contract_counts_zero(self):
         args = distro_tool.build_parser().parse_args(["--network", "tester", "contract"])
@@ -623,9 +643,55 @@ class ContractCommandTest(unittest.TestCase):
         with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
             distro_tool.do_contract(w3, contract, args)
         text = out.getvalue()
-        self.assertIn("network         : tester (chain id 1337)", text)
-        self.assertIn("products        : 0", text)
-        self.assertIn("builds          : 0", text)
+        self.assertIn("network           : tester (chain id 1337)", text)
+        self.assertIn("products          : 0", text)
+        self.assertIn("builds            : 0", text)
+
+
+class CommandHelpTest(unittest.TestCase):
+    """The help lists the commands grouped by the role the contract requires."""
+
+    def _help(self):
+        return distro_tool.build_parser().format_help()
+
+    def _subparsers(self):
+        parser = distro_tool.build_parser()
+        return next(action for action in parser._actions
+                    if isinstance(action, argparse._SubParsersAction))
+
+    def test_every_registered_command_has_a_role_group(self):
+        grouped = sorted(name for _role, names in distro_tool.COMMAND_ROLES
+                         for name in names)
+        self.assertEqual(sorted(self._subparsers().choices), grouped)
+
+    def test_a_command_without_a_role_group_fails_loudly(self):
+        # a subcommand added but not assigned to a role must not silently
+        # vanish from the help
+        p = argparse.ArgumentParser()
+        sub = p.add_subparsers(metavar="<command>")
+        sub.add_parser("stray", help="not assigned anywhere")
+        with self.assertRaises(KeyError):
+            distro_tool.commands_by_role(sub)
+
+    def test_the_help_lists_every_command_under_its_role(self):
+        text = self._help()
+        for role, names in distro_tool.COMMAND_ROLES:
+            self.assertIn(f"  {role}:", text)
+            for name in names:
+                self.assertIn(f"    {name} ", text)
+
+    def test_the_read_only_commands_come_first(self):
+        text = self._help()
+        self.assertLess(text.index("anyone (read-only)"), text.index("foundation owner"))
+        self.assertLess(text.index("foundation owner"), text.index("product builder"))
+        self.assertLess(text.index("product builder"), text.index("official validator"))
+        self.assertLess(text.index("official validator"), text.index("security team"))
+
+    def test_the_commands_are_not_listed_twice(self):
+        # once in the grouped epilog, not again under "positional arguments"
+        text = self._help()
+        self.assertEqual(text.count("    contract "), 1)
+        self.assertEqual(text.count("    set-security-level "), 1)
 
 
 class SetSecurityLevelCliTest(unittest.TestCase):
@@ -1005,7 +1071,7 @@ class ResolveNetworkTest(unittest.TestCase):
         self.assertEqual(self._resolve(None, {}), "sepolia")
 
     def test_the_parser_no_long_hardcodes_a_default(self):
-        self.assertIsNone(distro_tool.build_parser().parse_args(["roles"]).network)
+        self.assertIsNone(distro_tool.build_parser().parse_args(["contract"]).network)
 
 
 if __name__ == "__main__":

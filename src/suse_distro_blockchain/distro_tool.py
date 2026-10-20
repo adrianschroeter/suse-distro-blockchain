@@ -11,7 +11,7 @@
 # Regenerate with:
 #   python3 ape/build_contract.py   (or: make contract-build)
 
-import argparse, ast, configparser, hashlib, json, os, re, sys
+import argparse, ast, configparser, hashlib, json, os, re, sys, textwrap
 from web3 import Web3
 from web3.exceptions import (
     ContractLogicError,
@@ -700,7 +700,7 @@ def send_tx(w3, acct, fn_obj, gas=None):
                 f"  function : {getattr(fn_obj, 'fn_name', '?')}\n"
                 f"  from     : {sender}\n"
                 "  The signing account may be missing the required role.\n"
-                f"  Check roles with the 'roles' command (or pass --gas to force).{hint}"
+                f"  Check with 'contract' (or pass --gas to force).{hint}"
             )
         except (Web3RPCError, ValueError) as e:
             # an underfunded sender fails estimation on Arbitrum with
@@ -765,40 +765,28 @@ def prompt(args, msg):
 
 # -- read-only commands -------------------------------------------------------
 
-def do_roles(w3, c, args):
-    fields = [
-        ("compatibility_level", c.functions.compatibility_level().call()),
-        ("foundation_owner", c.functions.foundation_owner().call()),
-        ("product_creator", c.functions.product_creator().call()),
-        ("official_validator", c.functions.official_validator().call()),
-        ("security_team", c.functions.security_team().call()),
-        # next_product is the next free id, so the count is one lower
-        ("registered products", c.functions.get_product_counter().call()),
-    ]
-    for label, value in fields:
-        print(f"{label:<19}: {value}")
-
-
 def do_contract(w3, c, args):
-    """Show the contract this run talks to and how much it already holds.
+    """Show the contract this run talks to: who runs it and how much it holds.
 
     get_contract_addr already exited on a missing or mismatching
     compatibility_level, so the level below always matches this tool; it is
     printed anyway, next to the level of this tool, to name both sides.
     """
-    level = c.functions.compatibility_level().call()
-    products = c.functions.get_product_counter().call()
-    # next_build is the next free sequence number, so the count is one lower
-    builds = c.functions.next_build().call() - 1
-    print(f"network         : {args.network} (chain id {w3.eth.chain_id})")
-    print(f"contract        : {c.address}")
-    print(f"compatibility   : {level} (this tool implements level {COMPATIBILITY_LEVEL})")
-    print(f"products        : {products}")
-    print(f"builds          : {builds}")
-
-
-def do_counter(w3, c, args):
-    print(c.functions.get_product_counter().call())
+    fields = [
+        ("network", f"{args.network} (chain id {w3.eth.chain_id})"),
+        ("contract", c.address),
+        ("compatibility", f"{c.functions.compatibility_level().call()} "
+                          f"(this tool implements level {COMPATIBILITY_LEVEL})"),
+        ("foundation_owner", c.functions.foundation_owner().call()),
+        ("product_creator", c.functions.product_creator().call()),
+        ("official_validator", c.functions.official_validator().call()),
+        ("security_team", c.functions.security_team().call()),
+        ("products", c.functions.get_product_counter().call()),
+        # next_build is the next free sequence number, so the count is one lower
+        ("builds", c.functions.next_build().call() - 1),
+    ]
+    for label, value in fields:
+        print(f"{label:<18}: {value}")
 
 
 def do_showid(w3, c, args):
@@ -905,7 +893,7 @@ def do_current(w3, c, args):
 # name the failing one, turning a bare "transaction would revert" into an answer.
 
 def _require_any_role(c, acct, *roles):
-    """Exit unless acct holds one of the given roles (see do_roles for the list).
+    """Exit unless acct holds one of the given roles (see the contract command).
 
     A missing key is reported later by send_tx; here we only judge an address we
     actually hold, so the tester network's auto-funded account works as-is."""
@@ -922,7 +910,7 @@ def _require_any_role(c, acct, *roles):
         "Cannot sign this transaction: the key holds none of the required roles.\n"
         f"  signer   : {acct.address}\n"
         f"  required : one of {' / '.join(roles)}\n"
-        + "".join(f"  {name:<19}: {addr}\n" for name, addr in current)
+        + "".join(f"  {name:<18}: {addr}\n" for name, addr in current)
         + "  Sign with a key that holds one of those roles, or have the\n"
         "  foundation_owner change the assignment (set_product_creator / etc.)."
     )
@@ -1085,10 +1073,49 @@ def do_set_security_level(w3, c, args):
 
 # -- CLI parser ---------------------------------------------------------------
 
+# The subcommands grouped by the role the contract requires for them. The
+# read-only commands need no key at all, so they come first; every write
+# command belongs to the role whose function in the contract signs it (see
+# "contract" for the addresses currently assigned).
+COMMAND_ROLES = (
+    ("anyone (read-only)", ("contract", "current", "build", "showid")),
+    ("foundation owner", ("deploy",)),
+    ("product builder (product_creator)", ("add-product", "add-build", "register")),
+    ("official validator", ("approve", "reject")),
+    ("security team", ("set-security-level",)),
+)
+
+
+def commands_by_role(sub):
+    """Format the registered subcommands grouped by the role they require.
+
+    The role groups and their order come from COMMAND_ROLES; a command that is
+    registered but not assigned there (or the other way round) is a bug and
+    raises a KeyError rather than silently vanishing from the help.
+    """
+    helps = {action.dest: action.help or "" for action in sub._choices_actions}
+    unassigned = dict(helps)
+    for _role, names in COMMAND_ROLES:
+        for name in names:
+            unassigned.pop(name)  # KeyError: in COMMAND_ROLES but not registered
+    if unassigned:
+        raise KeyError(f"commands without a role group: {', '.join(sorted(unassigned))}")
+    lines = ["commands, by the role the contract requires:"]
+    for role, names in COMMAND_ROLES:
+        lines.append(f"  {role}:")
+        for name in names:
+            lines.extend(textwrap.wrap(
+                f"    {name:<18} {helps[name]}", width=78,
+                subsequent_indent=" " * 23,
+                break_long_words=False, break_on_hyphens=False,
+            ))
+    return "\n".join(lines)
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog="distro_tool",
         description="openSUSE distro attestation contract CLI.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--network", default=None,
                    help="network section of the conf (default: [main] network, else sepolia)")
@@ -1100,15 +1127,20 @@ def build_parser():
     p.add_argument("--key-file", help="file with hex private key")
     p.add_argument("--gas", type=int)
     p.add_argument("-y", "--yes", action="store_true")
-    sub = p.add_subparsers(dest="command", required=True)
+    sub = p.add_subparsers(
+        dest="command",
+        required=True,
+        metavar="<command>",
+        help="the command to run; the list below shows which role each one needs",
+    )
 
-    s = sub.add_parser("deploy")
+    s = sub.add_parser("deploy", help="deploy a new contract and assign the three roles")
     s.add_argument("--builder", required=True)
     s.add_argument("--validator", required=True)
     s.add_argument("--security", required=True)
     s.set_defaults(func=do_deploy)
 
-    s = sub.add_parser("add-product")
+    s = sub.add_parser("add-product", help="register a product name and its git_ref anchor")
     s.add_argument("name")
     s.add_argument(
         "git_ref",
@@ -1116,7 +1148,7 @@ def build_parser():
     )
     s.set_defaults(func=do_add_product)
 
-    s = sub.add_parser("add-build")
+    s = sub.add_parser("add-build", help="register a build checksum for a product")
     s.add_argument(
         "git_ref",
         help="the product anchor, hex md5 (32), sha1 (40) or sha256 (64)",
@@ -1134,19 +1166,18 @@ def build_parser():
     s.add_argument("--dry-run", action="store_true", help="only derive and print the values")
     s.set_defaults(func=do_register)
 
-    s = sub.add_parser("approve")
+    s = sub.add_parser("approve", help="attest that the build reproduces from its sources")
     s.add_argument("verification")
     s.set_defaults(func=do_approve)
 
-    s = sub.add_parser("reject")
+    s = sub.add_parser("reject", help="report that the build does not reproduce")
     s.add_argument("verification")
     s.set_defaults(func=do_reject)
 
     s = sub.add_parser(
         "set-security-level",
-        help="report the security level of a build (security_team role). The report "
-             "applies to that build and to every build of the product registered "
-             "before it; use not_set to withdraw it again",
+        help="report the security level of a build; the report also covers every "
+             "build of the product registered before it, not_set withdraws it",
     )
     s.add_argument("verification",
                    help="build checksum (hex) of the build the report is about")
@@ -1154,31 +1185,30 @@ def build_parser():
                    help="not_set/low/moderate/important/critical or 1/2/4/8/16")
     s.set_defaults(func=do_set_security_level)
 
-    s = sub.add_parser("roles")
-    s.set_defaults(func=do_roles)
-
     s = sub.add_parser(
         "contract",
-        help="show the contract in use: address, compatibility level and the "
-             "number of registered products and builds",
+        help="show the contract in use: address, roles and the number of "
+             "registered products and builds",
     )
     s.set_defaults(func=do_contract)
 
-    s = sub.add_parser("counter")
-    s.set_defaults(func=do_counter)
-
-    s = sub.add_parser("showid")
+    s = sub.add_parser("showid", help="show a product with its security reports")
     s.add_argument("product_id", type=int)
     s.set_defaults(func=do_showid)
 
-    s = sub.add_parser("build")
+    s = sub.add_parser("build", help="show a registered build and its verification state")
     s.add_argument("verification")
     s.set_defaults(func=do_build)
 
-    s = sub.add_parser("current")
+    s = sub.add_parser("current", help="show the current build of a product")
     s.add_argument("name")
     s.add_argument("kind", nargs="?", help="rpmmd|product|oci_container; default: all registered kinds")
     s.set_defaults(func=do_current)
+
+    p.epilog = commands_by_role(sub)
+    # the epilog lists the commands; argparse would repeat them under
+    # "positional arguments" as long as they carry a help text
+    sub._choices_actions.clear()
     return p
 
 
