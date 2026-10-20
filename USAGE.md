@@ -363,7 +363,7 @@ is looked up on-chain via `get_product_build`, and the following is reported:
 | `kind` | on-chain build kind is `rpmmd` |
 | `security_level` | severity in effect for this build, as reported on-chain by the security team (config keys `max_critical_issues` and `critical_issues`) |
 | `verification` | rebuild reproducibility: `outstanding` / `approved` / `rejected` (config key `min_attestation`) |
-| `current_build` | this digest is the current build for the product |
+| `current_build` | this digest is the current build for the product: the newest registration of the newest product record (highest creation id) that has a build of this kind |
 
 The state of an accepted build (`product`, `security_level`, `verification`,
 `current_build`) is **always** reported, by the command line tool as well as by

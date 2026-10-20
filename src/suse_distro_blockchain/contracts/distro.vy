@@ -13,6 +13,13 @@
 # else, so a client never misinterprets the on-chain data of a contract it does
 # not understand. Deployments without this constant predate the versioning and
 # are therefore incompatible with every current tool.
+#
+# Note: the selection rule of current_product_build() changed with this source
+# (highest creation counter instead of the last write) without bumping the
+# level, since neither the ABI nor the storage layout changed. Every client
+# keeps reading the same data; only the answer for a name that exists on
+# several product records differs from that of a deployment built from the
+# previous source, which is decided by the deployed bytecode, not the level.
 compatibility_level: public(constant(uint256)) = 1
 
 # The board of openSUSE community. Or the leadership team of SUSE.com.
@@ -121,6 +128,12 @@ security_marker_builds: HashMap[uint256, DynArray[String[128], MAX_SECURITY_MARK
 # the array itself is never assumed to be sorted.
 security_marker_newest_seq: HashMap[uint256, uint256]
 
+# The build that is current for a (product name, build kind) pair. Written only
+# by add_product_build: the newest registration of the product record with the
+# highest creation counter that has registered such a build. A registration
+# arriving late for an older record can therefore never take the current state
+# back to an older source state, and neither can a security report or an
+# attestation change which build is current.
 current_verification: HashMap[String[25], String[128]]
 
 #
@@ -233,11 +246,19 @@ def add_product_build(git_ref: String[64], kind: uint8, verification: String[128
     assert product_id != 0
 
     self.product_builds[verification].product_id = product_id
-    # set current verification
-    self.current_verification[self._build_key(self.products[product_id].name, kind)] = verification
-
     self.product_builds[verification].kind = kind
     self.product_builds[verification].attestation = Attestation.outstanding
+
+    # set current verification: between the product records sharing this name
+    # the one with the highest creation counter wins, and inside that record
+    # the newest registration wins. The selection therefore follows the
+    # add_product order (the newest source state), never the order the build
+    # registrations happen to arrive in. Nothing else in this contract writes
+    # this map: a security report or an attestation leaves it untouched.
+    key: String[25] = self._build_key(self.products[product_id].name, kind)
+    selected: String[128] = self.current_verification[key]
+    if selected == "" or product_id >= self.product_builds[selected].product_id:
+        self.current_verification[key] = verification
 
     # remember when this build was registered, so a security report can be
     # resolved to the builds that existed at the time it was made

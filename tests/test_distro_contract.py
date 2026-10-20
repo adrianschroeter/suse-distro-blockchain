@@ -50,7 +50,7 @@ def main():
     if contract.compatibility_level() != COMPATIBILITY_LEVEL:
         print("Unexpected compatibility level")
         raise SystemExit(1)
-    print("Contract compatibility level is 1")
+    print(f"Contract compatibility level is {COMPATIBILITY_LEVEL}")
 
     #
     # Register a product build
@@ -98,6 +98,12 @@ def main():
         contract.add_product_build(git_sha, build_kind, verification_of_build)
     build_a, build_b, build_c, build_d, build_e = (
         [primary_sha] + other_builds)
+
+    # inside one product record the newest registration is the current build
+    if contract.current_product_build(product_name, build_kind) != build_e:
+        print("The newest registration is not the current build")
+        raise SystemExit(1)
+    print("The newest registration of a product is its current build")
 
     def levels(*expected):
         """The level in effect for each build, oldest first."""
@@ -148,6 +154,12 @@ def main():
         raise SystemExit(1)
     print("The report history is readable")
 
+    # a security report never moves the current build
+    if contract.current_product_build(product_name, build_kind) != build_e:
+        print("A security report changed the current build")
+        raise SystemExit(1)
+    print("Security reports do not change the current build")
+
     # reports need a registered build
     try:
         contract.set_security_level("f" * 128, CRITICAL)
@@ -173,6 +185,54 @@ def main():
     if product_build[2] != 2:
         print("Attestation is not approved")
         raise SystemExit(1)
+
+    # and an attestation never moves it either
+    if contract.current_product_build(product_name, build_kind) != build_e:
+        print("An attestation changed the current build")
+        raise SystemExit(1)
+    print("Attestations do not change the current build")
+
+    #
+    # The current build follows the product creation counter, not the order
+    # the registrations arrive in: two product records share one name, the
+    # newer source state is registered first, the older one late.
+    #
+    boa.env.eoa = product_creator.address
+    ref_old, ref_new = "1" * 64, "2" * 64
+    contract.add_product("counter-1", ref_old)   # product #2
+    contract.add_product("counter-1", ref_new)   # product #3, newer source state
+    build_new = "1" * 128
+    contract.add_product_build(ref_new, build_kind, build_new)
+    contract.add_product_build(ref_old, build_kind, "2" * 128)
+
+    def current_counter(name, kind=build_kind):
+        return contract.current_product_build(name, kind)
+
+    # the newest product record stays current although its build was
+    # registered first
+    if current_counter("counter-1") != build_new:
+        print("An older product record took over the current build")
+        raise SystemExit(1)
+    print("The newest product record decides the current build")
+
+    # the newest registration wins inside that record, and a late
+    # registration of the older record cannot take the current state back
+    build_newer = "3" * 128
+    contract.add_product_build(ref_new, build_kind, build_newer)
+    contract.add_product_build(ref_old, build_kind, "4" * 128)
+    if current_counter("counter-1") != build_newer:
+        print("A late registration of an older product became current")
+        raise SystemExit(1)
+    print("A late registration of an older product cannot become current")
+
+    # a build kind only the older record has stays with the newest record
+    # that has it, so it never reports an empty current build
+    old_only = "5" * 128
+    contract.add_product_build(ref_old, 4, old_only)
+    if current_counter("counter-1", 4) != old_only:
+        print("A kind without a build of the newest product was lost")
+        raise SystemExit(1)
+    print("A kind stays with the newest product record that has it")
 
     # test address changes, take away permissions for everyone
     boa.env.eoa = foundation_owner.address
