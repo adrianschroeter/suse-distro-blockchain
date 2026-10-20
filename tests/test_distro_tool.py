@@ -577,6 +577,57 @@ class ContractCompatibilityTest(unittest.TestCase):
         w3.eth.contract.assert_not_called()
 
 
+class ContractCommandTest(unittest.TestCase):
+    """The contract command reports identity and size of the contract in use."""
+
+    ADDRESS = "0x02724c2d1e76Ea3A24247A48F959532cDb152Fb6"
+
+    def _contract(self):
+        contract = mock.Mock(address=self.ADDRESS)
+        contract.functions.compatibility_level.return_value.call.return_value = (
+            distro_tool.COMPATIBILITY_LEVEL
+        )
+        contract.functions.get_product_counter.return_value.call.return_value = 3
+        # next_build is the next free sequence number, so 5 means 4 builds
+        contract.functions.next_build.return_value.call.return_value = 5
+        return contract
+
+    def test_contract_subcommand(self):
+        args = distro_tool.build_parser().parse_args(["contract"])
+        self.assertIs(args.func, distro_tool.do_contract)
+
+    def test_reports_address_level_and_entry_counts(self):
+        args = distro_tool.build_parser().parse_args(["--network", "hoodi", "contract"])
+        w3 = mock.Mock()
+        w3.eth.chain_id = 560048
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            distro_tool.do_contract(w3, self._contract(), args)
+        text = out.getvalue()
+        self.assertIn("network         : hoodi (chain id 560048)", text)
+        self.assertIn(f"contract        : {self.ADDRESS}", text)
+        self.assertIn(
+            f"compatibility   : {distro_tool.COMPATIBILITY_LEVEL} "
+            f"(this tool implements level {distro_tool.COMPATIBILITY_LEVEL})",
+            text,
+        )
+        self.assertIn("products        : 3", text)
+        self.assertIn("builds          : 4", text)
+
+    def test_a_fresh_contract_counts_zero(self):
+        args = distro_tool.build_parser().parse_args(["--network", "tester", "contract"])
+        contract = self._contract()
+        contract.functions.get_product_counter.return_value.call.return_value = 0
+        contract.functions.next_build.return_value.call.return_value = 1
+        w3 = mock.Mock()
+        w3.eth.chain_id = 1337
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            distro_tool.do_contract(w3, contract, args)
+        text = out.getvalue()
+        self.assertIn("network         : tester (chain id 1337)", text)
+        self.assertIn("products        : 0", text)
+        self.assertIn("builds          : 0", text)
+
+
 class SetSecurityLevelCliTest(unittest.TestCase):
     VERIFICATION = "aa" * 32
 

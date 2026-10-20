@@ -779,6 +779,24 @@ def do_roles(w3, c, args):
         print(f"{label:<19}: {value}")
 
 
+def do_contract(w3, c, args):
+    """Show the contract this run talks to and how much it already holds.
+
+    get_contract_addr already exited on a missing or mismatching
+    compatibility_level, so the level below always matches this tool; it is
+    printed anyway, next to the level of this tool, to name both sides.
+    """
+    level = c.functions.compatibility_level().call()
+    products = c.functions.get_product_counter().call()
+    # next_build is the next free sequence number, so the count is one lower
+    builds = c.functions.next_build().call() - 1
+    print(f"network         : {args.network} (chain id {w3.eth.chain_id})")
+    print(f"contract        : {c.address}")
+    print(f"compatibility   : {level} (this tool implements level {COMPATIBILITY_LEVEL})")
+    print(f"products        : {products}")
+    print(f"builds          : {builds}")
+
+
 def do_counter(w3, c, args):
     print(c.functions.get_product_counter().call())
 
@@ -1138,6 +1156,13 @@ def build_parser():
 
     s = sub.add_parser("roles")
     s.set_defaults(func=do_roles)
+
+    s = sub.add_parser(
+        "contract",
+        help="show the contract in use: address, compatibility level and the "
+             "number of registered products and builds",
+    )
+    s.set_defaults(func=do_contract)
 
     s = sub.add_parser("counter")
     s.set_defaults(func=do_counter)
